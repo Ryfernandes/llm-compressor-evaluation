@@ -1,0 +1,7 @@
+## LLM Compressor Evaluation
+
+[LLM Compressor](https://github.com/vllm-project/llm-compressor) is an open source repository allowing machine learning engineers to apply a library of researched techniques for model compression. These techniques can result in smaller and faster models to run during inference, with minimal loss in accuracy or response quality.
+
+Additionally, the LLM Compressor team contributes to the [Inference Optimization](https://huggingface.co/inference-optimization) page on HuggingFace. Here, they post their own compressed models, often including Day 0 releases and personalized models for customers. Combined with the documentation that the team provides with recommendations for which models and algorithms to use, it is important to run comprehensive evaluations across such models and algorithms to see how they perform.
+
+Currently, evaluation is done in an ad-hoc method, with different engineers on the team having different, simple scripts that they will use for validating approaches. While this is suitable for surfacing errors in algorithm implementation, it is difficult to use for the purposes of comparing algorithms across different models in a reproducible manner. What is needed is a single, configurable pipeline that can be run to evaluate models and save results to be presented and compared later. Living in [Red Hat OpenShift AI](https://www.redhat.com/en/products/ai/openshift-ai), this pipeline will make comprehensive analysis possible and open the door for further autonomy and agentic integrations in the future.
