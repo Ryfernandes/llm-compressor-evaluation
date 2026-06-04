@@ -1,0 +1,13 @@
+[project]
+name = "mmlu-pro-fork"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "lm-eval[api]",
+    "vllm>=0.22.0",
+]
+
+[tool.uv.sources]
+lm-eval = { git = "https://github.com/neuralmagic/lm-evaluation-harness.git", rev = "mmlu-pro-chat-variant" }
