@@ -1,5 +1,5 @@
 [project]
-name = "mmlu-pro-fork"
+name = "lm-eval-mmlu-pro-fork"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"

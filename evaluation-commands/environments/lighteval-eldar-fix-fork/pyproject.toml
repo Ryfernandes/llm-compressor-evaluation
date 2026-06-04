@@ -1,0 +1,13 @@
+[project]
+name = "lighteval-eldar-fix-fork"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "lighteval",
+    "vllm>=0.22.0",
+]
+
+[tool.uv.sources]
+lighteval = { git = "https://github.com/neuralmagic/lighteval.git", rev = "eldar-fix-litellm" }

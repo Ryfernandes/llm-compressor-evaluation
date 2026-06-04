@@ -12,7 +12,7 @@ TASK_NAME="mmlu_pro"
 TASK_TAG="mmlu_pro_chat"
 SHOTS=5
 REPS=3
-VENV="mmlu-pro-fork"
+VENV="lm-eval-mmlu-pro-fork"
 
 mkdir -p results
 mkdir -p logs
@@ -104,9 +104,3 @@ done
 
 # max_gen_toks is an lm-eval parameter, which is the maximum number of tokens generated for
 #   completion/generation tasks
-
-echo "Completed LM Eval"
-
-echo "Resetting venv"
-
-activate_venv "base"
