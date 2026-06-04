@@ -6,12 +6,15 @@ set -euo pipefail
 MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct"
 HOST="0.0.0.0"
 PORT="8000"
-base_url="http://${HOST}:${PORT}/v1"
+BASE_URL="http://${HOST}:${PORT}/v1"
+
+mkdir -p results
+mkdir -p logs
 
 cleanup() {
     echo "vLLM server shutting down"
     if [[ -n "${VLLM_PID:-}" ]]; then
-        kill "$VLLM_PID" 2>/dev/null || true
+        kill -- "$VLLM_PID" 2>/dev/null || true
         wait "$VLLM_PID" 2>/dev/null || true
     fi
 }
@@ -21,11 +24,11 @@ cleanup() {
 trap cleanup EXIT
 # When the script exits, guarantee that cleanup is called
 
-chg run --gpus 1 -- vllm serve "$MODEL_NAME" \
+setsid chg run --gpus 1 -- vllm serve "$MODEL_NAME" \
     --host "$HOST" \
     --port "$PORT" \
-    > vllm_server.log 2>&1 &
-# Log everything in vllm_server.log, both errors and normal logs
+    > logs/gsm8k-platinum_vllm_server.log 2>&1 &
+# Log everything in logs/gsm8k-platinum_vllm_server.log, both errors and normal logs
 
 VLLM_PID=$!
 # & At the end starts vLLM in the background. $! gets the PID of the last background process
@@ -52,13 +55,13 @@ echo "Server ready"
 
 chg run --gpus 1 -- lm_eval --model local-chat-completions \
     --tasks gsm8k \
-    --model_args "model=$MODEL_NAME,max_length=8192,base_url=${base_url}/chat/completions,num_concurrent=128,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=1200" \
+    --model_args "model=$MODEL_NAME,max_length=8192,base_url=${BASE_URL}/chat/completions,num_concurrent=128,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=1200" \
     --num_fewshot 5 \
     --apply_chat_template \
     --fewshot_as_multiturn \
-    --output_path results_gsm8k.json \
+    --output_path results/results_gsm8k.json \
     --seed 1234 \
-    --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=64000,seed=1234"
+    --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=2048,seed=1234"
 
 # max_length is the maximum length of input and output assumed by lm-eval for the API model. Separate from
 #   vllm's max-model-len, which is the server-side context limit. This should be aligned with max-model-length
