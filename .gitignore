@@ -31,6 +31,7 @@ venv/
 env/
 ENV/
 .venv
+.playground_venv
 
 # PyTorch / Model files
 *.pt
