@@ -13,6 +13,8 @@ TASK_TAG="mmlu_cot_llama"
 SHOTS=5
 REPS=3
 VENV="lm-eval-base"
+MAX_LENGTH=4096
+MAX_GEN_TOKS=1024
 
 mkdir -p results
 mkdir -p logs
@@ -77,13 +79,13 @@ for i in $(seq 1 "$REPS"); do
 
     chg run --gpus 1 -- lm_eval --model local-chat-completions \
         --tasks ${TASK_TAG} \
-        --model_args "model=$MODEL_NAME,max_length=8192,base_url=${BASE_URL}/chat/completions,num_concurrent=128,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=1200" \
+        --model_args "model=$MODEL_NAME,max_length=${MAX_LENGTH},base_url=${BASE_URL}/chat/completions,num_concurrent=128,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=1200" \
         --num_fewshot $SHOTS \
         --apply_chat_template \
         --fewshot_as_multiturn \
         --output_path results/${TASK_NAME}_${i}_seed_${SEED}.json \
         --seed "$SEED" \
-        --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=8192,seed=$SEED"
+        --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=${MAX_GEN_TOKS},seed=$SEED"
 done
 
 # max_length is the maximum length of input and output assumed by lm-eval for the API model. Separate from

@@ -13,6 +13,7 @@ TASK_TAG="math_500"
 SHOTS=0
 REPS=3
 VENV="lighteval-eldar-fix-fork"
+MAX_GEN_TOKS=32000
 
 mkdir -p results
 mkdir -p logs
@@ -76,7 +77,7 @@ for i in $(seq 1 "$REPS"); do
     SEED=$((1233 + i))
 
     chg run --gpus 1 -- lighteval endpoint litellm \
-        "model_name=hosted_vllm/${MODEL_NAME},provider=hosted_vllm,base_url=${BASE_URL},timeout=3600,concurrent_requests=8,generation_parameters={temperature:0.6,max_new_tokens:8192,top_p:0.9,seed:${SEED},top_k:50}" \
+        "model_name=hosted_vllm/${MODEL_NAME},provider=hosted_vllm,base_url=${BASE_URL},timeout=3600,concurrent_requests=8,generation_parameters={temperature:0.6,max_new_tokens:${MAX_GEN_TOKS},top_p:0.9,seed:${SEED},top_k:50}" \
         "${TASK_TAG}@k=1@n=1|0" \
         --output-dir results/${TASK_NAME}_${i}_seed_${SEED} \
         --save-details
