@@ -31,8 +31,16 @@ cleanup() {
 
 activate_venv() {
     local env_name="$1"
-    source "../environments/${env_name}/.venv/bin/activate"
-    uv sync --project "../environments/${env_name}"
+
+    cd "../environments/${env_name}"
+
+    if [ ! -d ".venv" ]; then
+        uv venv
+    fi
+
+    source ".venv/bin/activate"
+    uv sync
+    cd -
 }
 # Activates the appropriate virtual environment
 
