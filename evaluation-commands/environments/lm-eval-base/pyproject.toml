@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "lm-eval[api]>=0.4.12",
+    "langdetect>=1.0.9",
+    "lm-eval[api,ifeval]>=0.4.12",
     "vllm>=0.22.0",
 ]
