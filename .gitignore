@@ -83,3 +83,6 @@ transformers_cache/
 tmp/
 temp/
 *.tmp
+
+# Litellm Cache
+.litellm_cache/
