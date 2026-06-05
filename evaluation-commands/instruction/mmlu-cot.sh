@@ -16,8 +16,12 @@ VENV="lm-eval-base"
 MAX_LENGTH=4096
 MAX_GEN_TOKS=1024
 
+# Custom fix for cache permissions issue
+export HF_DATASETS_CACHE="./tmp/hf_datasets_cache"
+
 mkdir -p results
 mkdir -p logs
+mkdir -p tmp/hf_datasets_cache
 
 cleanup() {
     echo "vLLM server shutting down"
