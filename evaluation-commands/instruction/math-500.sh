@@ -8,11 +8,11 @@ HOST="0.0.0.0"
 PORT="8000"
 BASE_URL="http://${HOST}:${PORT}/v1"
 
-TASK_NAME="gsm8k_platinum"
-TASK_TAG="gsm8k_platinum_cot_llama"
-SHOTS=5
+TASK_NAME="math_500"
+TASK_TAG="math_500"
+SHOTS=0
 REPS=3
-VENV="lm-eval-base"
+VENV="lighteval-eldar-fix-fork"
 
 mkdir -p results
 mkdir -p logs
@@ -75,33 +75,18 @@ for i in $(seq 1 "$REPS"); do
 
     SEED=$((1233 + i))
 
-    chg run --gpus 1 -- lm_eval --model local-chat-completions \
-        --tasks ${TASK_TAG} \
-        --model_args "model=$MODEL_NAME,max_length=8192,base_url=${BASE_URL}/chat/completions,num_concurrent=128,max_retries=3,tokenized_requests=False,tokenizer_backend=None,timeout=1200" \
-        --num_fewshot $SHOTS \
-        --apply_chat_template \
-        --fewshot_as_multiturn \
-        --output_path results/${TASK_NAME}_${i}_seed_${SEED}.json \
-        --seed "$SEED" \
-        --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=8192,seed=$SEED"
+    chg run --gpus 1 -- lighteval endpoint litellm \
+        "model_name=hosted_vllm/${MODEL_NAME},provider=hosted_vllm,base_url=${BASE_URL},timeout=3600,concurrent_requests=8,generation_parameters={temperature:0.6,max_new_tokens:8192,top_p:0.9,seed:${SEED},top_k:50}" \
+        "${TASK_TAG}@k=1@n=1|0" \
+        --output-dir results/${TASK_NAME}_${i}_seed_${SEED} \
+        --save-details
+
 done
 
-# max_length is the maximum length of input and output assumed by lm-eval for the API model. Separate from
-#   vllm's max-model-len, which is the server-side context limit. This should be aligned with max-model-length
-# num_concurrent is the number of API requests that lm_eval sends at the same time. Defaults as 1, but can
-#   be increased if there is spare bandwidth
-# num_retries is the number of times to retry a failed API request
-# tokenized_requests is whether to send text or token ids in requests. For OpenAI compatible backends, shoudl be False
-# tokenizer_backend is the tokenizer to use if it needs to tokenize requests
+# max_new_tokens is the maximum number of tokens the model is allowed to generate per answer
+# concurrent_requests is the number of API requests that lm_eval sends at the same time
 # timeout is the per-request api timeout
 
-# --apply_chat_template has lm_eval format task prompts with the model's chat template
-# --fewshot_as_multiturn will assign "User" and "Assistant" roles to each Q/A in the fewshot examples
 # --seed is for reproducibility
-
-# --limit only runs a subset of samples for each task
-
-# max_gen_toks is an lm-eval parameter, which is the maximum number of tokens generated for
-#   completion/generation tasks
 
 echo "Completed evaluation"

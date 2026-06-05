@@ -8,9 +8,9 @@ HOST="0.0.0.0"
 PORT="8000"
 BASE_URL="http://${HOST}:${PORT}/v1"
 
-TASK_NAME="gsm8k_platinum"
-TASK_TAG="gsm8k_platinum_cot_llama"
-SHOTS=5
+TASK_NAME="ifeval"
+TASK_TAG="ifeval"
+SHOTS=0
 REPS=3
 VENV="lm-eval-base"
 

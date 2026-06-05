@@ -81,10 +81,9 @@ for i in $(seq 1 "$REPS"); do
         --num_fewshot $SHOTS \
         --apply_chat_template \
         --fewshot_as_multiturn \
-        --limit 5\
         --output_path results/${TASK_NAME}_${i}_seed_${SEED}.json \
         --seed "$SEED" \
-        --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=2048,seed=$SEED"
+        --gen_kwargs "do_sample=True,temperature=0.6,top_p=0.9,top_k=50,max_gen_toks=8192,seed=$SEED"
 done
 
 # max_length is the maximum length of input and output assumed by lm-eval for the API model. Separate from
@@ -104,3 +103,5 @@ done
 
 # max_gen_toks is an lm-eval parameter, which is the maximum number of tokens generated for
 #   completion/generation tasks
+
+echo "Completed evaluation"
