@@ -1,0 +1,13 @@
+[project]
+name = "lm-eval-mrcr-fork"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "lm-eval[api]",
+    "vllm>=0.22.1",
+]
+
+[tool.uv.sources]
+lm-eval = { git = "https://github.com/eldarkurtic/lm-evaluation-harness.git", rev = "add-mrcr-eval" }
