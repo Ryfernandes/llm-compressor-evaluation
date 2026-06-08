@@ -1,0 +1,11 @@
+[project]
+name = "lm-eval-base"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langdetect>=1.0.9",
+    "lm-eval[api,ifeval]>=0.4.12",
+    "vllm>=0.22.0",
+]

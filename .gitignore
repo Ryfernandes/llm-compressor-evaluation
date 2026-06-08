@@ -31,6 +31,7 @@ venv/
 env/
 ENV/
 .venv
+.playground_venv
 
 # PyTorch / Model files
 *.pt
@@ -61,7 +62,7 @@ htmlcov/
 data/
 datasets/
 models/
-results/
+results*/
 outputs/
 checkpoints/
 logs/
@@ -82,3 +83,6 @@ transformers_cache/
 tmp/
 temp/
 *.tmp
+
+# Litellm Cache
+.litellm_cache/
