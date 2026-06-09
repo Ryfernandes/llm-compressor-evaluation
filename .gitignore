@@ -62,8 +62,10 @@ htmlcov/
 data/
 datasets/
 models/
-results*/
+results/
+results_old/
 outputs/
+output/
 checkpoints/
 logs/
 *.log
