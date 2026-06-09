@@ -63,7 +63,9 @@ data/
 datasets/
 models/
 results/
+results_old/
 outputs/
+output/
 checkpoints/
 logs/
 *.log
