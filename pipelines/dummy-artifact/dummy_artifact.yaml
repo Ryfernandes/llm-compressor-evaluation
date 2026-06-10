@@ -1,0 +1,434 @@
+# PIPELINE DEFINITION
+# Name: basketball-pipeline
+# Inputs:
+#    num_shots: int [Default: 100.0]
+#    seed: int [Default: 1234.0]
+# Outputs:
+#    Output: str
+components:
+  comp-combine-results:
+    executorLabel: exec-combine-results
+    inputDefinitions:
+      parameters:
+        best_percentage:
+          parameterType: STRING
+        game_result:
+          parameterType: STRING
+        most_points:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-get-shooting-percentage:
+    executorLabel: exec-get-shooting-percentage
+    inputDefinitions:
+      artifacts:
+        input_raw:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        output_averages:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-get-shooting-statistics:
+    executorLabel: exec-get-shooting-statistics
+    inputDefinitions:
+      parameters:
+        num_shots:
+          parameterType: NUMBER_INTEGER
+        seed:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        output_raw:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+  comp-report-best-percentage:
+    executorLabel: exec-report-best-percentage
+    inputDefinitions:
+      artifacts:
+        input_percentages:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-report-game-result:
+    executorLabel: exec-report-game-result
+    inputDefinitions:
+      artifacts:
+        input_points:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-report-most-points:
+    executorLabel: exec-report-most-points
+    inputDefinitions:
+      artifacts:
+        input_points:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-combine-results:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - combine_results
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef combine_results(\n    most_points: str, best_percentage: str,\
+          \ game_result: str\n) -> str:\n    return f\"{most_points}\\n{best_percentage}\\\
+          n{game_result}\"\n\n"
+        image: python:3.11
+    exec-get-shooting-percentage:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - get_shooting_percentage
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef get_shooting_percentage(\n    input_raw: dsl.Input[dsl.Artifact],\
+          \ output_averages: dsl.Output[dsl.Artifact]\n) -> None:\n    import json\n\
+          \n    with open(input_raw.path, \"r\") as f:\n        players = json.loads(f.read())\n\
+          \n    for player in players:\n        player[\"fg%\"] = player[\"made\"\
+          ] / player[\"shots\"] if player[\"shots\"] > 0 else 0\n\n    with open(output_averages.path,\
+          \ \"w\") as f:\n        f.write(json.dumps(players))\n\n"
+        image: python:3.11
+    exec-get-shooting-statistics:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - get_shooting_statistics
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef get_shooting_statistics(\n    output_raw: dsl.Output[dsl.Artifact],\
+          \ seed: int, num_shots: int\n) -> None:\n    import random\n    import json\n\
+          \n    random.seed(seed)\n\n    players = [\n        {\n            \"name\"\
+          : \"Wemby\",\n            \"team\": \"Spurs\",\n            \"points\":\
+          \ 0,\n            \"shots\": 0,\n            \"made\": 0,\n        },\n\
+          \        {\n            \"name\": \"Fox\",\n            \"team\": \"Spurs\"\
+          ,\n            \"points\": 0,\n            \"shots\": 0,\n            \"\
+          made\": 0,\n        },\n        {\n            \"name\": \"Vassell\",\n\
+          \            \"team\": \"Spurs\",\n            \"points\": 0,\n        \
+          \    \"shots\": 0,\n            \"made\": 0,\n        },\n        {\n  \
+          \          \"name\": \"Champagnie\",\n            \"team\": \"Spurs\",\n\
+          \            \"points\": 0,\n            \"shots\": 0,\n            \"made\"\
+          : 0,\n        },\n        {\n            \"name\": \"Castle\",\n       \
+          \     \"team\": \"Spurs\",\n            \"points\": 0,\n            \"shots\"\
+          : 0,\n            \"made\": 0,\n        },\n        {\n            \"name\"\
+          : \"Brunson\",\n            \"team\": \"Knicks\",\n            \"points\"\
+          : 0,\n            \"shots\": 0,\n            \"made\": 0,\n        },\n\
+          \        {\n            \"name\": \"Hart\",\n            \"team\": \"Knicks\"\
+          ,\n            \"points\": 0,\n            \"shots\": 0,\n            \"\
+          made\": 0,\n        },\n        {\n            \"name\": \"Bridges\",\n\
+          \            \"team\": \"Knicks\",\n            \"points\": 0,\n       \
+          \     \"shots\": 0,\n            \"made\": 0,\n        },\n        {\n \
+          \           \"name\": \"Anunoby\",\n            \"team\": \"Knicks\",\n\
+          \            \"points\": 0,\n            \"shots\": 0,\n            \"made\"\
+          : 0,\n        },\n        {\n            \"name\": \"Towns\",\n        \
+          \    \"team\": \"Knicks\",\n            \"points\": 0,\n            \"shots\"\
+          : 0,\n            \"made\": 0,\n        },\n    ]\n\n    for i in range(num_shots):\n\
+          \        player = random.choice(players)\n        points = random.choices([0,\
+          \ 2, 3], weights=[0.5, 0.3, 0.2])[0]\n        player[\"shots\"] += 1\n \
+          \       player[\"points\"] += points\n        if points > 0:\n         \
+          \   player[\"made\"] += 1\n\n    with open(output_raw.path, \"w\") as f:\n\
+          \        f.write(json.dumps(players))\n\n"
+        image: python:3.11
+    exec-report-best-percentage:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - report_best_percentage
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef report_best_percentage(\n    input_percentages: dsl.Input[dsl.Artifact]\n\
+          ) -> str:\n    import json\n\n    with open(input_percentages.path, \"r\"\
+          ) as f:\n        players = json.loads(f.read())\n\n    best_percentage =\
+          \ max(players, key=lambda p: p[\"fg%\"])\n    return f'{best_percentage[\"\
+          name\"]}: {best_percentage[\"fg%\"] * 100:.2f}%'\n\n"
+        image: python:3.11
+    exec-report-game-result:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - report_game_result
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef report_game_result(\n    input_points: dsl.Input[dsl.Artifact]\n\
+          ) -> str:\n    import json\n\n    with open(input_points.path, \"r\") as\
+          \ f:\n        points_players = json.loads(f.read())\n\n    team_scores =\
+          \ {}\n\n    for player in points_players:\n        if player[\"team\"] not\
+          \ in team_scores:\n            team_scores[player[\"team\"]] = 0\n     \
+          \   team_scores[player[\"team\"]] += player[\"points\"]\n\n    return \"\
+          , \".join([f\"{team}: {score}\" for team, score in team_scores.items()])\n\
+          \n"
+        image: python:3.11
+    exec-report-most-points:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - report_most_points
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef report_most_points(\n    input_points: dsl.Input[dsl.Artifact]\n\
+          ) -> str:\n    import json\n\n    with open(input_points.path, \"r\") as\
+          \ f:\n        players = json.loads(f.read())\n\n    most_points = max(players,\
+          \ key=lambda p: p[\"points\"])\n    return f'{most_points[\"name\"]}: {most_points[\"\
+          points\"]} points'\n\n"
+        image: python:3.11
+pipelineInfo:
+  name: basketball-pipeline
+root:
+  dag:
+    outputs:
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: Output
+            producerSubtask: combine-results
+    tasks:
+      combine-results:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-combine-results
+        dependentTasks:
+        - report-best-percentage
+        - report-game-result
+        - report-most-points
+        inputs:
+          parameters:
+            best_percentage:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: report-best-percentage
+            game_result:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: report-game-result
+            most_points:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: report-most-points
+        taskInfo:
+          name: combine-results
+      get-shooting-percentage:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-get-shooting-percentage
+        dependentTasks:
+        - get-shooting-statistics
+        inputs:
+          artifacts:
+            input_raw:
+              taskOutputArtifact:
+                outputArtifactKey: output_raw
+                producerTask: get-shooting-statistics
+        taskInfo:
+          name: get-shooting-percentage
+      get-shooting-statistics:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-get-shooting-statistics
+        inputs:
+          parameters:
+            num_shots:
+              componentInputParameter: num_shots
+            seed:
+              componentInputParameter: seed
+        taskInfo:
+          name: get-shooting-statistics
+      report-best-percentage:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-report-best-percentage
+        dependentTasks:
+        - get-shooting-percentage
+        inputs:
+          artifacts:
+            input_percentages:
+              taskOutputArtifact:
+                outputArtifactKey: output_averages
+                producerTask: get-shooting-percentage
+        taskInfo:
+          name: report-best-percentage
+      report-game-result:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-report-game-result
+        dependentTasks:
+        - get-shooting-statistics
+        inputs:
+          artifacts:
+            input_points:
+              taskOutputArtifact:
+                outputArtifactKey: output_raw
+                producerTask: get-shooting-statistics
+        taskInfo:
+          name: report-game-result
+      report-most-points:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-report-most-points
+        dependentTasks:
+        - get-shooting-statistics
+        inputs:
+          artifacts:
+            input_points:
+              taskOutputArtifact:
+                outputArtifactKey: output_raw
+                producerTask: get-shooting-statistics
+        taskInfo:
+          name: report-most-points
+  inputDefinitions:
+    parameters:
+      num_shots:
+        defaultValue: 100.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      seed:
+        defaultValue: 1234.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+  outputDefinitions:
+    parameters:
+      Output:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1

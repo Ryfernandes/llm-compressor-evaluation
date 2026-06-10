@@ -1,0 +1,141 @@
+# PIPELINE DEFINITION
+# Name: greeting-pipeline
+# Inputs:
+#    birth_year: int
+#    name: str
+# Outputs:
+#    Output: str
+components:
+  comp-calculate-age:
+    executorLabel: exec-calculate-age
+    inputDefinitions:
+      parameters:
+        birth_year:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: NUMBER_INTEGER
+  comp-construct-message:
+    executorLabel: exec-construct-message
+    inputDefinitions:
+      parameters:
+        age:
+          parameterType: NUMBER_INTEGER
+        name:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-calculate-age:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - calculate_age
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef calculate_age(birth_year: int) -> int:\n    age = 2026 - birth_year\n\
+          \    return age\n\n"
+        image: python:3.11
+    exec-construct-message:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - construct_message
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef construct_message(name: str, age: int) -> str:\n    message =\
+          \ f\"Hello, {name}! You are {age} years old.\"\n    return message\n\n"
+        image: python:3.11
+pipelineInfo:
+  name: greeting-pipeline
+root:
+  dag:
+    outputs:
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: Output
+            producerSubtask: construct-message
+    tasks:
+      calculate-age:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-calculate-age
+        inputs:
+          parameters:
+            birth_year:
+              componentInputParameter: birth_year
+        taskInfo:
+          name: calculate-age
+      construct-message:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-construct-message
+        dependentTasks:
+        - calculate-age
+        inputs:
+          parameters:
+            age:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: calculate-age
+            name:
+              componentInputParameter: name
+        taskInfo:
+          name: construct-message
+  inputDefinitions:
+    parameters:
+      birth_year:
+        parameterType: NUMBER_INTEGER
+      name:
+        parameterType: STRING
+  outputDefinitions:
+    parameters:
+      Output:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1
