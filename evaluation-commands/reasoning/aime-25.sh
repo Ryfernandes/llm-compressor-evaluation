@@ -9,7 +9,7 @@ PORT="8000"
 BASE_URL="http://${HOST}:${PORT}/v1"
 
 TASK_NAME="aime_25"
-TASK_TAG="aime_25"
+TASK_TAG="aime25"
 SHOTS=0
 REPS=8
 VENV="lighteval-eldar-fix-fork"
