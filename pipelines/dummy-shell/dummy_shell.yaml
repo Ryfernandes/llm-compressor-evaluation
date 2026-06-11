@@ -1,0 +1,144 @@
+# PIPELINE DEFINITION
+# Name: shell-pipeline
+# Inputs:
+#    message: str [Default: 'Hello, world!']
+# Outputs:
+#    Output: str
+components:
+  comp-read-file:
+    executorLabel: exec-read-file
+    inputDefinitions:
+      artifacts:
+        input_path:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-write-file:
+    executorLabel: exec-write-file
+    inputDefinitions:
+      parameters:
+        message:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_path:
+          artifactType:
+            schemaTitle: system.Artifact
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-read-file:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - read_file
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef read_file (input_path: dsl.Input[dsl.Artifact]) -> str:\n   \
+          \ with open(input_path.path, \"r\") as f:\n        message = f.read()\n\
+          \    return f\"Received message: {message}\"\n\n"
+        image: python:3.11
+    exec-write-file:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - write_file
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef write_file (message: str, output_path: dsl.Output[dsl.Artifact])\
+          \ -> None:\n    # Call shell with message\n    import subprocess\n    subprocess.run(\n\
+          \        [\"bash\", \"artifact-generator.sh\", message, output_path.path],\n\
+          \        check=True, # Python step will fail if the command fails\n    )\n\
+          \n"
+        image: quay.io/rh-ee-ryfernan/dummy-llmcompressor-image:0.1
+pipelineInfo:
+  name: shell-pipeline
+root:
+  dag:
+    outputs:
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: Output
+            producerSubtask: read-file
+    tasks:
+      read-file:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-read-file
+        dependentTasks:
+        - write-file
+        inputs:
+          artifacts:
+            input_path:
+              taskOutputArtifact:
+                outputArtifactKey: output_path
+                producerTask: write-file
+        taskInfo:
+          name: read-file
+      write-file:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-write-file
+        inputs:
+          parameters:
+            message:
+              componentInputParameter: message
+        taskInfo:
+          name: write-file
+  inputDefinitions:
+    parameters:
+      message:
+        defaultValue: Hello, world!
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    parameters:
+      Output:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1

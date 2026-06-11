@@ -1,0 +1,90 @@
+# PIPELINE DEFINITION
+# Name: gpu-pipeline
+# Inputs:
+#    message: str [Default: 'Hello, world!']
+# Outputs:
+#    Output: str
+components:
+  comp-test-gpu-access:
+    executorLabel: exec-test-gpu-access
+    inputDefinitions:
+      parameters:
+        message:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-test-gpu-access:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - test_gpu_access
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef test_gpu_access(message: str) -> str:\n    import torch\n\n \
+          \   print(f\"CUDA available: {torch.cuda.is_available()}\")\n\n    if torch.cuda.is_available():\n\
+          \        print(f\"Device count: {torch.cuda.device_count()}\")\n\n    return\
+          \ \"GPU access test completed\"\n\n"
+        image: quay.io/rh-ee-ryfernan/dummy-llmcompressor-image:0.1
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: nvidia.com/gpu
+            type: nvidia.com/gpu
+pipelineInfo:
+  name: gpu-pipeline
+root:
+  dag:
+    outputs:
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: Output
+            producerSubtask: test-gpu-access
+    tasks:
+      test-gpu-access:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-test-gpu-access
+        inputs:
+          parameters:
+            message:
+              componentInputParameter: message
+        taskInfo:
+          name: test-gpu-access
+  inputDefinitions:
+    parameters:
+      message:
+        defaultValue: Hello, world!
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    parameters:
+      Output:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1

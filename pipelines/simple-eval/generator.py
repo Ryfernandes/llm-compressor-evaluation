@@ -1,0 +1,255 @@
+from typing import List, Optional
+
+import kfp
+from kfp import dsl, kubernetes
+
+PIPELINE_NAME = "simple_oneshot_gsm8k"
+
+@kfp.dsl.component(
+    base_image="quay.io/opendatahub/llmcompressor-pipeline-runtime:main",
+)
+def run_oneshot_datafree(
+    model_id: str, recipe: str, output_model: dsl.Output[dsl.Artifact]
+):
+    from llmcompressor import oneshot
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id, device_map="auto", torch_dtype="auto"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+
+    model = oneshot(model=model, recipe=recipe, tokenizer=tokenizer)
+
+    model.save_pretrained(output_model.path)
+    tokenizer.save_pretrained(output_model.path)
+
+    return
+
+
+@kfp.dsl.component(
+    base_image="quay.io/opendatahub/llmcompressor-pipeline-runtime:main",
+)
+def run_oneshot_calibrated(
+    model_id: str,
+    recipe: str,
+    dataset_id: str,
+    dataset_split: str,
+    output_model: dsl.Output[dsl.Artifact],
+    num_calibration_samples: int = 512,
+    max_sequence_length: int = 2048,
+    seed: int = 42,
+):
+    from datasets import load_dataset
+    from llmcompressor import oneshot
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    # Load dataset.
+    ds = load_dataset(dataset_id, split=dataset_split)
+    ds = ds.shuffle(seed=seed).select(range(num_calibration_samples))
+
+    # Preprocess the data into the format the model is trained with.
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+    def preprocess(example):
+        return {
+            "text": tokenizer.apply_chat_template(
+                example["messages"],
+                tokenize=False,
+            )
+        }
+
+    ds = ds.map(preprocess)
+
+    # Tokenize the data (be careful with bos tokens - we need add_special_tokens=False since the chat_template already added it).
+    def tokenize(sample):
+        return tokenizer(
+            sample["text"],
+            padding=False,
+            max_length=max_sequence_length,
+            truncation=True,
+            add_special_tokens=False,
+        )
+
+    ds = ds.map(tokenize, remove_columns=ds.column_names)
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id, device_map="auto", torch_dtype="auto"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+
+    model = oneshot(
+        model=model,
+        dataset=ds,
+        recipe=recipe,
+        tokenizer=tokenizer,
+        max_seq_length=max_sequence_length,
+        num_calibration_samples=num_calibration_samples,
+    )
+
+    model.save_pretrained(output_model.path)
+    tokenizer.save_pretrained(output_model.path)
+
+    return
+
+
+@kfp.dsl.component(
+    base_image="quay.io/opendatahub/llmcompressor-pipeline-runtime:main",
+)
+def eval_model(
+    input_model: dsl.Input[dsl.Artifact],
+    tasks: List[str],
+    model: str = "vllm",
+    model_args: dict = {
+        "add_bos_token": True,
+        "dtype": "bfloat16",
+        "device": "auto",
+        "max_model_len": 4096,
+        "gpu_memory_utilization": 0.8,
+    },
+    limit: Optional[int] = None,
+    num_fewshot: int = 5,
+    batch_size: Optional[int] = None,
+) -> str:
+    import lm_eval
+    from lm_eval.utils import make_table
+
+    model_args["pretrained"] = input_model.path
+
+    results = lm_eval.simple_evaluate(
+        model=model,
+        model_args=model_args,
+        limit=limit,
+        tasks=tasks,
+        num_fewshot=num_fewshot,
+        batch_size=batch_size or "auto",
+    )
+    print("lm_eval finished:\n", make_table(results))
+    return make_table(results)
+
+
+@kfp.dsl.pipeline(
+    name="llmcompressor-oneshot",
+    description="A demo pipeline to showcase how multiple recipes can be applied"
+    " to a given model, followed by an eval step",
+)
+def pipeline(
+    model_id: str = "meta-llama/Llama-3.2-3B-Instruct",
+    dataset_id: str = "HuggingFaceH4/ultrachat_200k",
+    dataset_split: str = "train_sft",
+    cpu_request: str = "12",
+    cpu_limit: str = "18",
+    memory_request: str = "32G",
+    memory_limit: str = "64G",
+):
+    datafree_recipes: List[str] = [
+        """
+        quant_stage:
+            quant_modifiers:
+                QuantizationModifier:
+                    ignore: ["lm_head"]
+                    targets: ["Linear"]
+                    scheme: "W4A16"
+        """,
+    ]
+    for recipe in datafree_recipes:
+        oneshot_task = (
+            run_oneshot_datafree(model_id=model_id, recipe=recipe)
+            .set_cpu_request(cpu_request)
+            .set_memory_request(memory_request)
+            .set_cpu_limit(cpu_limit)
+            .set_memory_limit(memory_limit)
+        )
+        kubernetes.use_secret_as_env(
+            oneshot_task,
+            secret_name="hf-hub-secret",
+            secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
+        )
+        # Run on GPU, need to add toleration depending on RHOAI Cluster setup
+        eval_task = (
+            eval_model(
+                input_model=oneshot_task.outputs["output_model"],  # noqa: F841
+                tasks=["gsm8k"],
+            )
+            .set_accelerator_type("nvidia.com/gpu")
+            .set_accelerator_limit("1")
+            .set_cpu_request(cpu_request)
+            .set_memory_request(memory_request)
+            .set_cpu_limit(cpu_limit)
+            .set_memory_limit(memory_limit)
+        )
+        """
+        kubernetes.add_toleration(
+            eval_task,
+            key="nvidia.com/gpu",
+            operator="Equal",
+            value="NVIDIA-A10G-SHARED",
+            effect="NoSchedule",
+        )
+        """
+
+    calibrated_recipes: List[str] = [
+        """
+        quant_stage:
+            quant_modifiers:
+                GPTQModifier:
+                    ignore: ["lm_head"]
+                    targets: ["Linear"]
+                    scheme: "W4A16"
+        """
+    ]
+    for recipe in calibrated_recipes:
+        calibrated_task = (
+            run_oneshot_calibrated(
+                model_id=model_id,
+                recipe=recipe,
+                dataset_id=dataset_id,
+                dataset_split=dataset_split,
+            )
+            .set_accelerator_type("nvidia.com/gpu")
+            .set_accelerator_limit("1")
+            .set_cpu_request(cpu_request)
+            .set_memory_request(memory_request)
+            .set_cpu_limit(cpu_limit)
+            .set_memory_limit(memory_limit)
+        )
+        kubernetes.use_secret_as_env(
+            calibrated_task,
+            secret_name="hf-hub-secret",
+            secret_key_to_env={"HF_TOKEN": "HF_TOKEN"},
+        )
+        """
+        kubernetes.add_toleration(
+            calibrated_task,
+            key="nvidia.com/gpu",
+            operator="Equal",
+            value="NVIDIA-A10G-SHARED",
+            effect="NoSchedule",
+        )
+        """
+        eval_task = (
+            eval_model(
+                input_model=calibrated_task.outputs["output_model"],  # noqa: F841
+                tasks=["gsm8k"],
+            )
+            .set_accelerator_type("nvidia.com/gpu")
+            .set_accelerator_limit("1")
+            .set_cpu_request(cpu_request)
+            .set_memory_request(memory_request)
+            .set_cpu_limit(cpu_limit)
+            .set_memory_limit(memory_limit)
+        )
+        """
+        kubernetes.add_toleration(
+            eval_task,
+            key="nvidia.com/gpu",
+            operator="Equal",
+            value="NVIDIA-A10G-SHARED",
+            effect="NoSchedule",
+        )
+        """
+
+if __name__ == "__main__":
+    kfp.compiler.Compiler().compile(
+        pipeline_func=pipeline, package_path=f"{PIPELINE_NAME}.yaml"
+    )

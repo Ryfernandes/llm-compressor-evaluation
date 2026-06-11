@@ -1,0 +1,76 @@
+# PIPELINE DEFINITION
+# Name: pvc-pipeline
+components:
+  comp-run-pvc-script:
+    executorLabel: exec-run-pvc-script
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-run-pvc-script:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - run_pvc_script
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef run_pvc_script() -> str:\n    import importlib.util\n    from\
+          \ pathlib import Path\n    file_path=Path(\"/tier1/code/hello_world.py\"\
+          )\n\n    spec = importlib.util.spec_from_file_location(\"hello_world\",\
+          \ file_path)\n    hello_world = importlib.util.module_from_spec(spec)\n\
+          \    spec.loader.exec_module(hello_world)\n\n    hello_world.say_hello()\n\
+          \n    return \"Test completed, check component output\"\n\n"
+        image: python:3.11
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: nvidia.com/gpu
+            type: nvidia.com/gpu
+pipelineInfo:
+  name: pvc-pipeline
+root:
+  dag:
+    tasks:
+      run-pvc-script:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-run-pvc-script
+        taskInfo:
+          name: run-pvc-script
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-run-pvc-script:
+          pvcMount:
+          - constant: ryan-interactive-tier-1
+            mountPath: /tier1
+            pvcNameParameter:
+              runtimeValue:
+                constant: ryan-interactive-tier-1

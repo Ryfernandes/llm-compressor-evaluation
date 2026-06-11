@@ -1,0 +1,4 @@
+MSG="$1"
+OUTPUT_PATH="$2"
+
+echo "$MSG" > "$OUTPUT_PATH"
