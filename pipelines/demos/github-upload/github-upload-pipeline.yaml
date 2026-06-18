@@ -1,0 +1,247 @@
+# PIPELINE DEFINITION
+# Name: github-upload-pipeline
+# Description: Demo pipeline that creates a JSON artifact and submits it to GitHub via PR
+# Inputs:
+#    base_branch: str [Default: 'main']
+#    github_owner: str [Default: 'Ryfernandes']
+#    github_repo: str [Default: 'llm-evaluation-pipeline-results']
+components:
+  comp-create-json-artifact:
+    executorLabel: exec-create-json-artifact
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-submit-github-pr:
+    executorLabel: exec-submit-github-pr
+    inputDefinitions:
+      parameters:
+        artifact_path:
+          parameterType: STRING
+        base_branch:
+          defaultValue: main
+          isOptional: true
+          parameterType: STRING
+        owner:
+          defaultValue: Ryfernandes
+          isOptional: true
+          parameterType: STRING
+        repo:
+          defaultValue: llm-evaluation-pipeline-results
+          isOptional: true
+          parameterType: STRING
+        repo_results_dir:
+          defaultValue: results
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-create-json-artifact:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - create_json_artifact
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef create_json_artifact() -> str:\n    \"\"\"Create a small JSON\
+          \ artifact with timestamp and UUID in pvc storage.\"\"\"\n    from datetime\
+          \ import datetime, timezone\n    import json\n    import uuid\n    from\
+          \ pathlib import Path\n\n    # Generate timestamp and UUID\n    timestamp\
+          \ = datetime.now(timezone.utc)\n    uid = uuid.uuid4().hex[:8]\n    formatted_date\
+          \ = timestamp.strftime(\"%Y%m%d-%H%M%S\")\n\n    # Create filename with\
+          \ required format\n    filename = f\"collated-{formatted_date}-{uid}.json\"\
+          \n\n    # Create the artifact content\n    artifact_data = {\n        \"\
+          created_at_utc\": timestamp.isoformat(),\n        \"uuid\": uid,\n     \
+          \   \"filename\": filename,\n        \"placeholder_data\": {\n         \
+          \   \"status\": \"success\",\n            \"pipeline\": \"github-upload-pipeline\"\
+          ,\n            \"sample_metrics\": {\n                \"count\": 42,\n \
+          \               \"score\": 0.95\n            }\n        }\n    }\n\n   \
+          \ # Write to pvc storage location\n    output_dir = Path(\"/tier2/tmp/example_jsons\"\
+          )\n    output_dir.mkdir(parents=True, exist_ok=True)\n\n    output_file\
+          \ = output_dir / filename\n\n    # Write JSON file\n    with output_file.open(\"\
+          w\") as f:\n        json.dump(artifact_data, f, indent=2, sort_keys=True)\n\
+          \n    return str(output_file)\n\n"
+        image: python:3.11
+    exec-submit-github-pr:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - submit_github_pr
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'requests'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.1'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef submit_github_pr(\n    artifact_path: str,\n    owner: str =\
+          \ \"Ryfernandes\",\n    repo: str = \"llm-evaluation-pipeline-results\"\
+          ,\n    base_branch: str = \"main\",\n    repo_results_dir: str = \"results\"\
+          \n) -> str:\n    \"\"\"Submit the artifact file as a PR to GitHub repository.\"\
+          \"\"\n    import base64\n    import os\n    import time\n    import uuid\n\
+          \    from pathlib import Path\n    from urllib.parse import quote\n    import\
+          \ requests\n\n    # Read GitHub token from environment variable (injected\
+          \ via kubernetes.use_secret_as_env)\n    github_token = os.environ.get(\"\
+          GITHUB_TOKEN\")\n    if not github_token:\n        raise ValueError(\"GITHUB_TOKEN\
+          \ environment variable not set\")\n\n    # GitHub API helper function\n\
+          \    def github_request(\n        method: str,\n        url: str,\n    \
+          \    token: str,\n        json_data: dict = None,\n    ) -> dict:\n    \
+          \    resp = requests.request(\n            method,\n            url,\n \
+          \           headers={\n                \"Accept\": \"application/vnd.github+json\"\
+          ,\n                \"Authorization\": f\"Bearer {token}\",\n           \
+          \     \"X-GitHub-Api-Version\": \"2022-11-28\",\n            },\n      \
+          \      json=json_data,\n            timeout=30,\n        )\n\n        if\
+          \ not resp.ok:\n            raise RuntimeError(\n                f\"GitHub\
+          \ API request failed: {method} {url}\\n\"\n                f\"Status: {resp.status_code}\\\
+          n\"\n                f\"Response: {resp.text}\"\n            )\n\n     \
+          \   if resp.status_code == 204:\n            return {}\n\n        return\
+          \ resp.json()\n\n    GITHUB_API = \"https://api.github.com\"\n\n    local_file_path\
+          \ = Path(artifact_path)\n\n    if not local_file_path.is_file():\n     \
+          \   raise FileNotFoundError(f\"Local file does not exist: {local_file_path}\"\
+          )\n\n    filename = local_file_path.name\n\n    # GitHub repository paths\
+          \ should not start with \"/\"\n    repo_results_dir = repo_results_dir.strip(\"\
+          /\")\n    repo_file_path = f\"{repo_results_dir}/{filename}\"\n\n    # 1.\
+          \ Get the current commit SHA of base branch\n    ref_path = quote(f\"heads/{base_branch}\"\
+          , safe=\"/\")\n    base_ref = github_request(\n        \"GET\",\n      \
+          \  f\"{GITHUB_API}/repos/{owner}/{repo}/git/ref/{ref_path}\",\n        github_token,\n\
+          \    )\n    base_sha = base_ref[\"object\"][\"sha\"]\n\n    # 2. Create\
+          \ a unique branch from base\n    safe_stem = local_file_path.stem.replace(\"\
+          \ \", \"-\")\n    unique_suffix = f\"{int(time.time())}-{uuid.uuid4().hex[:8]}\"\
+          \n    branch_name = f\"add-result-{safe_stem}-{unique_suffix}\"\n\n    github_request(\n\
+          \        \"POST\",\n        f\"{GITHUB_API}/repos/{owner}/{repo}/git/refs\"\
+          ,\n        github_token,\n        json_data={\n            \"ref\": f\"\
+          refs/heads/{branch_name}\",\n            \"sha\": base_sha,\n        },\n\
+          \    )\n\n    # 3. Commit the file to the new branch\n    file_bytes = local_file_path.read_bytes()\n\
+          \    encoded_content = base64.b64encode(file_bytes).decode(\"ascii\")\n\n\
+          \    commit_message = f\"Add result file {filename}\"\n\n    contents_path\
+          \ = quote(repo_file_path, safe=\"/\")\n    commit_response = github_request(\n\
+          \        \"PUT\",\n        f\"{GITHUB_API}/repos/{owner}/{repo}/contents/{contents_path}\"\
+          ,\n        github_token,\n        json_data={\n            \"message\":\
+          \ commit_message,\n            \"content\": encoded_content,\n         \
+          \   \"branch\": branch_name,\n        },\n    )\n\n    # 4. Open a PR from\
+          \ the new branch to base\n    pr_title = f\"Add pipeline result {filename}\"\
+          \n    pr_body = f\"Automated PR adding pipeline result: `{repo_file_path}`\"\
+          \n\n    pr_response = github_request(\n        \"POST\",\n        f\"{GITHUB_API}/repos/{owner}/{repo}/pulls\"\
+          ,\n        github_token,\n        json_data={\n            \"title\": pr_title,\n\
+          \            \"head\": branch_name,\n            \"base\": base_branch,\n\
+          \            \"body\": pr_body,\n        },\n    )\n\n    pr_url = pr_response[\"\
+          html_url\"]\n    pr_number = pr_response[\"number\"]\n\n    return f\"Created\
+          \ PR #{pr_number}: {pr_url}\"\n\n"
+        image: python:3.11
+pipelineInfo:
+  description: Demo pipeline that creates a JSON artifact and submits it to GitHub
+    via PR
+  name: github-upload-pipeline
+root:
+  dag:
+    tasks:
+      create-json-artifact:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-create-json-artifact
+        taskInfo:
+          name: create-json-artifact
+      submit-github-pr:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-submit-github-pr
+        dependentTasks:
+        - create-json-artifact
+        inputs:
+          parameters:
+            artifact_path:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: create-json-artifact
+            base_branch:
+              componentInputParameter: base_branch
+            owner:
+              componentInputParameter: github_owner
+            repo:
+              componentInputParameter: github_repo
+        taskInfo:
+          name: submit-github-pr
+  inputDefinitions:
+    parameters:
+      base_branch:
+        defaultValue: main
+        isOptional: true
+        parameterType: STRING
+      github_owner:
+        defaultValue: Ryfernandes
+        isOptional: true
+        parameterType: STRING
+      github_repo:
+        defaultValue: llm-evaluation-pipeline-results
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.1
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-create-json-artifact:
+          pvcMount:
+          - constant: evaluation-pipeline-artifacts-tier-2
+            mountPath: /tier2
+            pvcNameParameter:
+              runtimeValue:
+                constant: evaluation-pipeline-artifacts-tier-2
+        exec-submit-github-pr:
+          pvcMount:
+          - constant: evaluation-pipeline-artifacts-tier-2
+            mountPath: /tier2
+            pvcNameParameter:
+              runtimeValue:
+                constant: evaluation-pipeline-artifacts-tier-2
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: GITHUB_TOKEN
+              secretKey: GITHUB_TOKEN
+            optional: false
+            secretName: evaluation-pipeline-results-gh
+            secretNameParameter:
+              runtimeValue:
+                constant: evaluation-pipeline-results-gh

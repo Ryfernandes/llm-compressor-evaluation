@@ -88,3 +88,5 @@ temp/
 
 # Litellm Cache
 .litellm_cache/
+
+.local-*
