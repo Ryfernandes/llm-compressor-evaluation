@@ -11,6 +11,8 @@
 #        ']
 #    evaluation_tasks: str [Default: 'gsm8k_platinum_cot_llama']
 #    model_id: str [Default: 'Qwen/Qwen3-8B']
+#    pvc_name: str [Default: 'evaluation-pipeline-artifacts-tier-2']
+#    reasoning_parser: str [Default: '']
 components:
   comp-cleanup-model-staging:
     executorLabel: exec-cleanup-model-staging
@@ -26,6 +28,10 @@ components:
     executorLabel: exec-collate-results
     inputDefinitions:
       parameters:
+        compression_recipe:
+          parameterType: STRING
+        model_id:
+          parameterType: STRING
         save_path:
           defaultValue: /tier2/evaluations
           isOptional: true
@@ -87,6 +93,8 @@ components:
         pod_suffix:
           defaultValue: baseline-server
           isOptional: true
+          parameterType: STRING
+        reasoning_parser:
           parameterType: STRING
         service_account_name:
           defaultValue: ml-workload
@@ -163,6 +171,8 @@ components:
         pod_suffix:
           defaultValue: baseline-server
           isOptional: true
+          parameterType: STRING
+        reasoning_parser:
           parameterType: STRING
         service_account_name:
           defaultValue: ml-workload
@@ -246,26 +256,12 @@ components:
     executorLabel: exec-evaluate-model
     inputDefinitions:
       parameters:
-        max_gen_toks:
-          defaultValue: 4096.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
-        max_length:
-          defaultValue: 32768.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
         model_path:
           defaultValue: Qwen/Qwen3-8B
           isOptional: true
           parameterType: STRING
-        n_shots:
-          defaultValue: 5.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
-        reps:
-          defaultValue: 1.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
+        reasoning_parser:
+          parameterType: STRING
         save_path:
           defaultValue: /tier2/evaluations
           isOptional: true
@@ -284,26 +280,12 @@ components:
     executorLabel: exec-evaluate-model-2
     inputDefinitions:
       parameters:
-        max_gen_toks:
-          defaultValue: 4096.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
-        max_length:
-          defaultValue: 32768.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
         model_path:
           defaultValue: Qwen/Qwen3-8B
           isOptional: true
           parameterType: STRING
-        n_shots:
-          defaultValue: 5.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
-        reps:
-          defaultValue: 1.0
-          isOptional: true
-          parameterType: NUMBER_INTEGER
+        reasoning_parser:
+          parameterType: STRING
         save_path:
           defaultValue: /tier2/evaluations
           isOptional: true
@@ -445,37 +427,37 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef collate_results(\n    session_id: str,\n    save_path: str =\
-          \ \"/tier2/evaluations\",\n):\n    \"\"\"Collate evaluation results from\
-          \ baseline and compressed model runs.\"\"\"\n    import json\n    import\
-          \ os\n    import statistics\n    from collections import defaultdict\n \
-          \   from datetime import datetime, timezone\n    from pathlib import Path\n\
-          \n    # Metrics registry\n    METRICS_REGISTRY = {\n        \"gsm8k\": [\"\
-          exact_match,strict-match\"],\n        \"gsm8k_platinum_cot_llama\": [\"\
-          exact_match,strict-match\"],\n        \"mmlu_cot_llama\": [\"exact_match,strict_match\"\
-          ],\n        \"mmlu_pro_chat\": [\"exact_match,custom-extract\"],\n     \
-          \   \"ifeval\": [\"inst_level_strict_acc,none\"],\n        \"math_500|0\"\
-          : [\"pass@k:k=1&n=1\"],\n        \"aime25|0\": [\"pass@k:k=1&n=1\"],\n \
-          \       \"gpqa:diamond|0\": [\"gpqa_pass@k:k=1&n=1\"],\n        \"lcb:codegeneration_v6\"\
-          : [\"codegen_pass@k:k=1&n=1\"],\n        \"mrcr\": [\"score_gt_16k_le_32k\"\
-          , \"AUC\"],\n    }\n\n    def scan_json_files(directories):\n        \"\"\
-          \"Recursively find all JSON files in directories with source tracking.\"\
-          \"\"\n        json_files = []\n        for directory in directories:\n \
-          \           dir_path = Path(directory).resolve()\n            if dir_path.exists()\
-          \ and dir_path.is_dir():\n                # Track which source directory\
-          \ each file came from\n                for f in dir_path.rglob(\"*.json\"\
-          ):\n                    if f.is_file():\n                        json_files.append((str(f),\
-          \ str(directory)))\n        return sorted(json_files, key=lambda x: x[0])\n\
-          \n    def detect_framework(json_data):\n        \"\"\"Detect if results\
-          \ are from LM-Eval or LightEval.\"\"\"\n        if \"config_general\" in\
-          \ json_data:\n            return \"lighteval\"\n        if all(key in json_data\
-          \ for key in [\"results\", \"configs\", \"config\"]):\n            return\
-          \ \"lmeval\"\n        return None\n\n    def extract_lmeval_metrics(task_name,\
-          \ task_results):\n        \"\"\"Extract metrics from LM-Eval format.\"\"\
-          \"\n        metrics = {}\n        if task_name in METRICS_REGISTRY:\n  \
-          \          for metric_key in METRICS_REGISTRY[task_name]:\n            \
-          \    value = task_results.get(metric_key)\n                stderr_key =\
-          \ f\"{metric_key}_stderr\"\n                stderr = task_results.get(stderr_key)\n\
+          \ *\n\ndef collate_results(\n    session_id: str,\n    model_id: str,\n\
+          \    compression_recipe: str,\n    save_path: str = \"/tier2/evaluations\"\
+          ,\n):\n    \"\"\"Collate evaluation results from baseline and compressed\
+          \ model runs.\"\"\"\n    import json\n    import os\n    import statistics\n\
+          \    from collections import defaultdict\n    from datetime import datetime,\
+          \ timezone\n    from pathlib import Path\n\n    # Metrics registry\n   \
+          \ METRICS_REGISTRY = {\n        \"gsm8k\": [\"exact_match,strict-match\"\
+          ],\n        \"gsm8k_platinum_cot_llama\": [\"exact_match,strict-match\"\
+          ],\n        \"mmlu_cot_llama\": [\"exact_match,strict_match\"],\n      \
+          \  \"mmlu_pro_chat\": [\"exact_match,custom-extract\"],\n        \"ifeval\"\
+          : [\"inst_level_strict_acc,none\"],\n        \"math_500|0\": [\"pass@k:k=1&n=1\"\
+          ],\n        \"aime25|0\": [\"pass@k:k=1&n=1\"],\n        \"gpqa:diamond|0\"\
+          : [\"gpqa_pass@k:k=1&n=1\"],\n        \"lcb:codegeneration_v6\": [\"codegen_pass@k:k=1&n=1\"\
+          ],\n        \"mrcr\": [\"score_gt_16k_le_32k\", \"AUC\"],\n    }\n\n   \
+          \ def scan_json_files(directories):\n        \"\"\"Recursively find all\
+          \ JSON files in directories with source tracking.\"\"\"\n        json_files\
+          \ = []\n        for directory in directories:\n            dir_path = Path(directory).resolve()\n\
+          \            if dir_path.exists() and dir_path.is_dir():\n             \
+          \   # Track which source directory each file came from\n               \
+          \ for f in dir_path.rglob(\"*.json\"):\n                    if f.is_file():\n\
+          \                        json_files.append((str(f), str(directory)))\n \
+          \       return sorted(json_files, key=lambda x: x[0])\n\n    def detect_framework(json_data):\n\
+          \        \"\"\"Detect if results are from LM-Eval or LightEval.\"\"\"\n\
+          \        if \"config_general\" in json_data:\n            return \"lighteval\"\
+          \n        if all(key in json_data for key in [\"results\", \"configs\",\
+          \ \"config\"]):\n            return \"lmeval\"\n        return None\n\n\
+          \    def extract_lmeval_metrics(task_name, task_results):\n        \"\"\"\
+          Extract metrics from LM-Eval format.\"\"\"\n        metrics = {}\n     \
+          \   if task_name in METRICS_REGISTRY:\n            for metric_key in METRICS_REGISTRY[task_name]:\n\
+          \                value = task_results.get(metric_key)\n                stderr_key\
+          \ = f\"{metric_key}_stderr\"\n                stderr = task_results.get(stderr_key)\n\
           \                if stderr == \"N/A\":\n                    stderr = None\n\
           \                if value is not None:\n                    metrics[metric_key]\
           \ = {\"value\": value, \"stderr\": stderr}\n        return metrics\n\n \
@@ -573,15 +555,17 @@ deploymentSpec:
           \ = {\n        \"baseline_results\": baseline_results,\n        \"compressed_results\"\
           : compressed_results,\n        \"metadata\": {\n            \"parser_version\"\
           : \"1.0\",\n            \"parse_datetime\": datetime.now(timezone.utc).isoformat(),\n\
-          \            \"session_id\": session_id,\n            \"total_results_parsed\"\
-          : len(all_results),\n            \"total_files_parsed\": len(json_files),\n\
-          \            \"unique_tasks\": unique_tasks,\n            \"unique_models\"\
-          : unique_models\n        }\n    }\n\n    output_dir = session_dir / \"collated\"\
-          \n    output_dir.mkdir(parents=True, exist_ok=True)\n    output_path = output_dir\
-          \ / \"collated_results.json\"\n\n    with open(output_path, \"w\") as f:\n\
-          \        json.dump(output_data, f, indent=2)\n\n    print(f\"Collated results\
-          \ written to: {output_path}\")\n    print(f\"Baseline results: {len(baseline_results)}\"\
-          )\n    print(f\"Compressed results: {len(compressed_results)}\")\n\n"
+          \            \"session_id\": session_id,\n            \"model_id\": model_id,\n\
+          \            \"compression_recipe\": compression_recipe,\n            \"\
+          total_results_parsed\": len(all_results),\n            \"total_files_parsed\"\
+          : len(json_files),\n            \"unique_tasks\": unique_tasks,\n      \
+          \      \"unique_models\": unique_models\n        }\n    }\n\n    output_dir\
+          \ = session_dir / \"collated\"\n    output_dir.mkdir(parents=True, exist_ok=True)\n\
+          \    output_path = output_dir / \"collated_results.json\"\n\n    with open(output_path,\
+          \ \"w\") as f:\n        json.dump(output_data, f, indent=2)\n\n    print(f\"\
+          Collated results written to: {output_path}\")\n    print(f\"Baseline results:\
+          \ {len(baseline_results)}\")\n    print(f\"Compressed results: {len(compressed_results)}\"\
+          )\n\n"
         image: python:3.12
     exec-compress-model:
       container:
@@ -645,17 +629,18 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef create_vllm_server(\n    session_id: str,\n    namespace: str\
-          \ = \"machine-learning\",\n    pod_suffix: str = \"baseline-server\",\n\
-          \    service_account_name: str = \"ml-workload\",\n    model: str = \"Qwen/Qwen3-8B\"\
-          ,\n    input_model: dsl.Input[dsl.Artifact] = None,\n    hf_secret_name:\
-          \ str = \"ryan-test-hf-hub-secret\",\n    tier2_pvc_name: str = \"evaluation-pipeline-model-server-tier-2\"\
-          ,\n    tier2_mount_path: str = \"/tier2\",\n    fs_group: int = 1000770000,\n\
-          \    max_model_len: int = 32768,\n    tp: str = \"1\",\n    dp: str = \"\
-          1\",\n    tier1_storage_class: str = \"lvms-h100-tier1-storage\",\n    tier1_size:\
-          \ str = \"50Gi\",\n    node_selector_key: str = \"node-role.kubernetes.io/up-h100mcp\"\
-          ,\n    wait_timeout_seconds: int = 2700,\n) -> str:\n    import time\n \
-          \   import requests\n    import os\n    from pathlib import Path\n    from\
+          \ *\n\ndef create_vllm_server(\n    session_id: str,\n    reasoning_parser:\
+          \ str,\n    namespace: str = \"machine-learning\",\n    pod_suffix: str\
+          \ = \"baseline-server\",\n    service_account_name: str = \"ml-workload\"\
+          ,\n    model: str = \"Qwen/Qwen3-8B\",\n    input_model: dsl.Input[dsl.Artifact]\
+          \ = None,\n    hf_secret_name: str = \"ryan-test-hf-hub-secret\",\n    tier2_pvc_name:\
+          \ str = \"evaluation-pipeline-model-server-tier-2\",\n    tier2_mount_path:\
+          \ str = \"/tier2\",\n    fs_group: int = 1000770000,\n    max_model_len:\
+          \ int = 32768,\n    tp: str = \"1\",\n    dp: str = \"1\",\n    tier1_storage_class:\
+          \ str = \"lvms-h100-tier1-storage\",\n    tier1_size: str = \"50Gi\",\n\
+          \    node_selector_key: str = \"node-role.kubernetes.io/up-h100mcp\",\n\
+          \    wait_timeout_seconds: int = 2700,\n) -> str:\n    import time\n   \
+          \ import requests\n    import os\n    from pathlib import Path\n    from\
           \ kubernetes import client, config\n    from kubernetes.client.rest import\
           \ ApiException\n\n    config.load_incluster_config()\n    core = client.CoreV1Api()\n\
           \n    pod_name = f\"{namespace}--{session_id}--{pod_suffix}\"\n    service_name\
@@ -710,37 +695,41 @@ deploymentSpec:
           echo \" Starting vLLM Server\"\necho \" Model name: ${MODEL}\"\necho \"\
           \ Source: tier2 staging (${TIER2_STAGING})\"\necho \" Local path: ${LOCAL_MODEL}\"\
           \necho \" TP=${TP}, DP=${DP}\"\necho \"================================================================\"\
-          \n\nexec vllm serve \"$LOCAL_MODEL\" \\\n  --served-model-name \"$MODEL\"\
-          \ \\\n  --tensor-parallel-size \"${TP}\" \\\n  --data-parallel-size \"${DP}\"\
-          \ \\\n  --max-model-len \"${MAX_MODEL_LEN}\" \\\n  --host 0.0.0.0 \\\n \
-          \ --port 8000\n'''\n    else:\n        script = r'''\nset -eu\n\nexport\
-          \ HF_HOME=\"/tier2/hf-hub\"\nexport HF_HUB_CACHE=\"/tier2/hf-hub\"\nexport\
-          \ OMP_NUM_THREADS=1\nexport MKL_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\n\
-          export NUMEXPR_NUM_THREADS=1\nexport VLLM_WORKER_MULTIPROC_METHOD=spawn\n\
-          \nmkdir -p \\\n  \"$HF_HOME\" \\\n  \"$HOME\" \\\n  \"$XDG_CACHE_HOME\"\
-          \ \\\n  \"$TORCH_HOME\" \\\n  \"$TORCHINDUCTOR_CACHE_DIR\" \\\n  \"$TRITON_CACHE_DIR\"\
-          \ \\\n  \"$VLLM_CACHE_ROOT\"\n\nLOCAL_MODEL=\"/tier1/model\"\n\necho \"\
-          [*] Resolving/downloading model from Hugging Face...\"\nCACHE_PATH=$(python3\
-          \ -c \"\nfrom huggingface_hub import snapshot_download\nprint(snapshot_download('${MODEL}'))\n\
-          \")\necho \"[+] HF cache path: ${CACHE_PATH}\"\n\necho \"[*] Copying model\
-          \ to tier1 NVMe...\"\nrm -rf \"$LOCAL_MODEL\"\nmkdir -p \"$LOCAL_MODEL\"\
-          \ncp -rL \"$CACHE_PATH\"/. \"$LOCAL_MODEL\"/\necho \"[+] Model copied to\
-          \ ${LOCAL_MODEL}\"\n\necho \"================================================================\"\
+          \n\nVLLM_ARGS=(\n  \"$LOCAL_MODEL\"\n  --served-model-name \"$MODEL\"\n\
+          \  --tensor-parallel-size \"${TP}\"\n  --data-parallel-size \"${DP}\"\n\
+          \  --max-model-len \"${MAX_MODEL_LEN}\"\n  --host 0.0.0.0\n  --port 8000\n\
+          )\n\nif [ -n \"${REASONING_PARSER}\" ]; then\n  VLLM_ARGS+=(--reasoning-parser\
+          \ \"${REASONING_PARSER}\")\nfi\n\nexec vllm serve \"${VLLM_ARGS[@]}\"\n\
+          '''\n    else:\n        script = r'''\nset -eu\n\nexport HF_HOME=\"/tier2/hf-hub\"\
+          \nexport HF_HUB_CACHE=\"/tier2/hf-hub\"\nexport OMP_NUM_THREADS=1\nexport\
+          \ MKL_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\nexport NUMEXPR_NUM_THREADS=1\n\
+          export VLLM_WORKER_MULTIPROC_METHOD=spawn\n\nmkdir -p \\\n  \"$HF_HOME\"\
+          \ \\\n  \"$HOME\" \\\n  \"$XDG_CACHE_HOME\" \\\n  \"$TORCH_HOME\" \\\n \
+          \ \"$TORCHINDUCTOR_CACHE_DIR\" \\\n  \"$TRITON_CACHE_DIR\" \\\n  \"$VLLM_CACHE_ROOT\"\
+          \n\nLOCAL_MODEL=\"/tier1/model\"\n\necho \"[*] Resolving/downloading model\
+          \ from Hugging Face...\"\nCACHE_PATH=$(python3 -c \"\nfrom huggingface_hub\
+          \ import snapshot_download\nprint(snapshot_download('${MODEL}'))\n\")\n\
+          echo \"[+] HF cache path: ${CACHE_PATH}\"\n\necho \"[*] Copying model to\
+          \ tier1 NVMe...\"\nrm -rf \"$LOCAL_MODEL\"\nmkdir -p \"$LOCAL_MODEL\"\n\
+          cp -rL \"$CACHE_PATH\"/. \"$LOCAL_MODEL\"/\necho \"[+] Model copied to ${LOCAL_MODEL}\"\
+          \n\necho \"================================================================\"\
           \necho \" Starting vLLM Server\"\necho \" HF model: ${MODEL}\"\necho \"\
           \ Local path: ${LOCAL_MODEL}\"\necho \" TP=${TP}, DP=${DP}\"\necho \"================================================================\"\
-          \n\nexec vllm serve \"$LOCAL_MODEL\" \\\n  --served-model-name \"$MODEL\"\
-          \ \\\n  --tensor-parallel-size \"${TP}\" \\\n  --data-parallel-size \"${DP}\"\
-          \ \\\n  --max-model-len \"${MAX_MODEL_LEN}\" \\\n  --host 0.0.0.0 \\\n \
-          \ --port 8000\n'''\n\n    pod_manifest = {\n        \"apiVersion\": \"v1\"\
-          ,\n        \"kind\": \"Pod\",\n        \"metadata\": {\n            \"name\"\
-          : pod_name,\n            \"namespace\": namespace,\n            \"labels\"\
-          : labels,\n        },\n        \"spec\": {\n            \"restartPolicy\"\
-          : \"Never\",\n            \"serviceAccountName\": service_account_name,\n\
-          \            \"securityContext\": {\n                \"fsGroup\": fs_group,\n\
-          \                \"fsGroupChangePolicy\": \"Always\",\n            },\n\
-          \            \"nodeSelector\": {\n                node_selector_key: \"\"\
-          ,\n            },\n            \"containers\": [\n                {\n  \
-          \                  \"name\": \"vllm-server\",\n                    \"image\"\
+          \n\nVLLM_ARGS=(\n  \"$LOCAL_MODEL\"\n  --served-model-name \"$MODEL\"\n\
+          \  --tensor-parallel-size \"${TP}\"\n  --data-parallel-size \"${DP}\"\n\
+          \  --max-model-len \"${MAX_MODEL_LEN}\"\n  --host 0.0.0.0\n  --port 8000\n\
+          )\n\nif [ -n \"${REASONING_PARSER}\" ]; then\n  VLLM_ARGS+=(--reasoning-parser\
+          \ \"${REASONING_PARSER}\")\nfi\n\nexec vllm serve \"${VLLM_ARGS[@]}\"\n\
+          '''\n\n    pod_manifest = {\n        \"apiVersion\": \"v1\",\n        \"\
+          kind\": \"Pod\",\n        \"metadata\": {\n            \"name\": pod_name,\n\
+          \            \"namespace\": namespace,\n            \"labels\": labels,\n\
+          \        },\n        \"spec\": {\n            \"restartPolicy\": \"Never\"\
+          ,\n            \"serviceAccountName\": service_account_name,\n         \
+          \   \"securityContext\": {\n                \"fsGroup\": fs_group,\n   \
+          \             \"fsGroupChangePolicy\": \"Always\",\n            },\n   \
+          \         \"nodeSelector\": {\n                node_selector_key: \"\",\n\
+          \            },\n            \"containers\": [\n                {\n    \
+          \                \"name\": \"vllm-server\",\n                    \"image\"\
           : \"vllm/vllm-openai:v0.22.1\",\n                    \"ports\": [\n    \
           \                    {\n                            \"name\": \"http\",\n\
           \                            \"containerPort\": 8000,\n                \
@@ -762,6 +751,7 @@ deploymentSpec:
           \          {\"name\": \"DP\", \"value\": dp},\n                        {\"\
           name\": \"MAX_MODEL_LEN\", \"value\": str(max_model_len)},\n           \
           \             {\"name\": \"TIER2_MODEL_STAGING_PATH\", \"value\": tier2_model_staging_path},\n\
+          \                        {\"name\": \"REASONING_PARSER\", \"value\": reasoning_parser},\n\
           \                        {\n                            \"name\": \"HF_TOKEN\"\
           ,\n                            \"valueFrom\": {\n                      \
           \          \"secretKeyRef\": {\n                                    \"name\"\
@@ -884,17 +874,18 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef create_vllm_server(\n    session_id: str,\n    namespace: str\
-          \ = \"machine-learning\",\n    pod_suffix: str = \"baseline-server\",\n\
-          \    service_account_name: str = \"ml-workload\",\n    model: str = \"Qwen/Qwen3-8B\"\
-          ,\n    input_model: dsl.Input[dsl.Artifact] = None,\n    hf_secret_name:\
-          \ str = \"ryan-test-hf-hub-secret\",\n    tier2_pvc_name: str = \"evaluation-pipeline-model-server-tier-2\"\
-          ,\n    tier2_mount_path: str = \"/tier2\",\n    fs_group: int = 1000770000,\n\
-          \    max_model_len: int = 32768,\n    tp: str = \"1\",\n    dp: str = \"\
-          1\",\n    tier1_storage_class: str = \"lvms-h100-tier1-storage\",\n    tier1_size:\
-          \ str = \"50Gi\",\n    node_selector_key: str = \"node-role.kubernetes.io/up-h100mcp\"\
-          ,\n    wait_timeout_seconds: int = 2700,\n) -> str:\n    import time\n \
-          \   import requests\n    import os\n    from pathlib import Path\n    from\
+          \ *\n\ndef create_vllm_server(\n    session_id: str,\n    reasoning_parser:\
+          \ str,\n    namespace: str = \"machine-learning\",\n    pod_suffix: str\
+          \ = \"baseline-server\",\n    service_account_name: str = \"ml-workload\"\
+          ,\n    model: str = \"Qwen/Qwen3-8B\",\n    input_model: dsl.Input[dsl.Artifact]\
+          \ = None,\n    hf_secret_name: str = \"ryan-test-hf-hub-secret\",\n    tier2_pvc_name:\
+          \ str = \"evaluation-pipeline-model-server-tier-2\",\n    tier2_mount_path:\
+          \ str = \"/tier2\",\n    fs_group: int = 1000770000,\n    max_model_len:\
+          \ int = 32768,\n    tp: str = \"1\",\n    dp: str = \"1\",\n    tier1_storage_class:\
+          \ str = \"lvms-h100-tier1-storage\",\n    tier1_size: str = \"50Gi\",\n\
+          \    node_selector_key: str = \"node-role.kubernetes.io/up-h100mcp\",\n\
+          \    wait_timeout_seconds: int = 2700,\n) -> str:\n    import time\n   \
+          \ import requests\n    import os\n    from pathlib import Path\n    from\
           \ kubernetes import client, config\n    from kubernetes.client.rest import\
           \ ApiException\n\n    config.load_incluster_config()\n    core = client.CoreV1Api()\n\
           \n    pod_name = f\"{namespace}--{session_id}--{pod_suffix}\"\n    service_name\
@@ -949,37 +940,41 @@ deploymentSpec:
           echo \" Starting vLLM Server\"\necho \" Model name: ${MODEL}\"\necho \"\
           \ Source: tier2 staging (${TIER2_STAGING})\"\necho \" Local path: ${LOCAL_MODEL}\"\
           \necho \" TP=${TP}, DP=${DP}\"\necho \"================================================================\"\
-          \n\nexec vllm serve \"$LOCAL_MODEL\" \\\n  --served-model-name \"$MODEL\"\
-          \ \\\n  --tensor-parallel-size \"${TP}\" \\\n  --data-parallel-size \"${DP}\"\
-          \ \\\n  --max-model-len \"${MAX_MODEL_LEN}\" \\\n  --host 0.0.0.0 \\\n \
-          \ --port 8000\n'''\n    else:\n        script = r'''\nset -eu\n\nexport\
-          \ HF_HOME=\"/tier2/hf-hub\"\nexport HF_HUB_CACHE=\"/tier2/hf-hub\"\nexport\
-          \ OMP_NUM_THREADS=1\nexport MKL_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\n\
-          export NUMEXPR_NUM_THREADS=1\nexport VLLM_WORKER_MULTIPROC_METHOD=spawn\n\
-          \nmkdir -p \\\n  \"$HF_HOME\" \\\n  \"$HOME\" \\\n  \"$XDG_CACHE_HOME\"\
-          \ \\\n  \"$TORCH_HOME\" \\\n  \"$TORCHINDUCTOR_CACHE_DIR\" \\\n  \"$TRITON_CACHE_DIR\"\
-          \ \\\n  \"$VLLM_CACHE_ROOT\"\n\nLOCAL_MODEL=\"/tier1/model\"\n\necho \"\
-          [*] Resolving/downloading model from Hugging Face...\"\nCACHE_PATH=$(python3\
-          \ -c \"\nfrom huggingface_hub import snapshot_download\nprint(snapshot_download('${MODEL}'))\n\
-          \")\necho \"[+] HF cache path: ${CACHE_PATH}\"\n\necho \"[*] Copying model\
-          \ to tier1 NVMe...\"\nrm -rf \"$LOCAL_MODEL\"\nmkdir -p \"$LOCAL_MODEL\"\
-          \ncp -rL \"$CACHE_PATH\"/. \"$LOCAL_MODEL\"/\necho \"[+] Model copied to\
-          \ ${LOCAL_MODEL}\"\n\necho \"================================================================\"\
+          \n\nVLLM_ARGS=(\n  \"$LOCAL_MODEL\"\n  --served-model-name \"$MODEL\"\n\
+          \  --tensor-parallel-size \"${TP}\"\n  --data-parallel-size \"${DP}\"\n\
+          \  --max-model-len \"${MAX_MODEL_LEN}\"\n  --host 0.0.0.0\n  --port 8000\n\
+          )\n\nif [ -n \"${REASONING_PARSER}\" ]; then\n  VLLM_ARGS+=(--reasoning-parser\
+          \ \"${REASONING_PARSER}\")\nfi\n\nexec vllm serve \"${VLLM_ARGS[@]}\"\n\
+          '''\n    else:\n        script = r'''\nset -eu\n\nexport HF_HOME=\"/tier2/hf-hub\"\
+          \nexport HF_HUB_CACHE=\"/tier2/hf-hub\"\nexport OMP_NUM_THREADS=1\nexport\
+          \ MKL_NUM_THREADS=1\nexport OPENBLAS_NUM_THREADS=1\nexport NUMEXPR_NUM_THREADS=1\n\
+          export VLLM_WORKER_MULTIPROC_METHOD=spawn\n\nmkdir -p \\\n  \"$HF_HOME\"\
+          \ \\\n  \"$HOME\" \\\n  \"$XDG_CACHE_HOME\" \\\n  \"$TORCH_HOME\" \\\n \
+          \ \"$TORCHINDUCTOR_CACHE_DIR\" \\\n  \"$TRITON_CACHE_DIR\" \\\n  \"$VLLM_CACHE_ROOT\"\
+          \n\nLOCAL_MODEL=\"/tier1/model\"\n\necho \"[*] Resolving/downloading model\
+          \ from Hugging Face...\"\nCACHE_PATH=$(python3 -c \"\nfrom huggingface_hub\
+          \ import snapshot_download\nprint(snapshot_download('${MODEL}'))\n\")\n\
+          echo \"[+] HF cache path: ${CACHE_PATH}\"\n\necho \"[*] Copying model to\
+          \ tier1 NVMe...\"\nrm -rf \"$LOCAL_MODEL\"\nmkdir -p \"$LOCAL_MODEL\"\n\
+          cp -rL \"$CACHE_PATH\"/. \"$LOCAL_MODEL\"/\necho \"[+] Model copied to ${LOCAL_MODEL}\"\
+          \n\necho \"================================================================\"\
           \necho \" Starting vLLM Server\"\necho \" HF model: ${MODEL}\"\necho \"\
           \ Local path: ${LOCAL_MODEL}\"\necho \" TP=${TP}, DP=${DP}\"\necho \"================================================================\"\
-          \n\nexec vllm serve \"$LOCAL_MODEL\" \\\n  --served-model-name \"$MODEL\"\
-          \ \\\n  --tensor-parallel-size \"${TP}\" \\\n  --data-parallel-size \"${DP}\"\
-          \ \\\n  --max-model-len \"${MAX_MODEL_LEN}\" \\\n  --host 0.0.0.0 \\\n \
-          \ --port 8000\n'''\n\n    pod_manifest = {\n        \"apiVersion\": \"v1\"\
-          ,\n        \"kind\": \"Pod\",\n        \"metadata\": {\n            \"name\"\
-          : pod_name,\n            \"namespace\": namespace,\n            \"labels\"\
-          : labels,\n        },\n        \"spec\": {\n            \"restartPolicy\"\
-          : \"Never\",\n            \"serviceAccountName\": service_account_name,\n\
-          \            \"securityContext\": {\n                \"fsGroup\": fs_group,\n\
-          \                \"fsGroupChangePolicy\": \"Always\",\n            },\n\
-          \            \"nodeSelector\": {\n                node_selector_key: \"\"\
-          ,\n            },\n            \"containers\": [\n                {\n  \
-          \                  \"name\": \"vllm-server\",\n                    \"image\"\
+          \n\nVLLM_ARGS=(\n  \"$LOCAL_MODEL\"\n  --served-model-name \"$MODEL\"\n\
+          \  --tensor-parallel-size \"${TP}\"\n  --data-parallel-size \"${DP}\"\n\
+          \  --max-model-len \"${MAX_MODEL_LEN}\"\n  --host 0.0.0.0\n  --port 8000\n\
+          )\n\nif [ -n \"${REASONING_PARSER}\" ]; then\n  VLLM_ARGS+=(--reasoning-parser\
+          \ \"${REASONING_PARSER}\")\nfi\n\nexec vllm serve \"${VLLM_ARGS[@]}\"\n\
+          '''\n\n    pod_manifest = {\n        \"apiVersion\": \"v1\",\n        \"\
+          kind\": \"Pod\",\n        \"metadata\": {\n            \"name\": pod_name,\n\
+          \            \"namespace\": namespace,\n            \"labels\": labels,\n\
+          \        },\n        \"spec\": {\n            \"restartPolicy\": \"Never\"\
+          ,\n            \"serviceAccountName\": service_account_name,\n         \
+          \   \"securityContext\": {\n                \"fsGroup\": fs_group,\n   \
+          \             \"fsGroupChangePolicy\": \"Always\",\n            },\n   \
+          \         \"nodeSelector\": {\n                node_selector_key: \"\",\n\
+          \            },\n            \"containers\": [\n                {\n    \
+          \                \"name\": \"vllm-server\",\n                    \"image\"\
           : \"vllm/vllm-openai:v0.22.1\",\n                    \"ports\": [\n    \
           \                    {\n                            \"name\": \"http\",\n\
           \                            \"containerPort\": 8000,\n                \
@@ -1001,6 +996,7 @@ deploymentSpec:
           \          {\"name\": \"DP\", \"value\": dp},\n                        {\"\
           name\": \"MAX_MODEL_LEN\", \"value\": str(max_model_len)},\n           \
           \             {\"name\": \"TIER2_MODEL_STAGING_PATH\", \"value\": tier2_model_staging_path},\n\
+          \                        {\"name\": \"REASONING_PARSER\", \"value\": reasoning_parser},\n\
           \                        {\n                            \"name\": \"HF_TOKEN\"\
           ,\n                            \"valueFrom\": {\n                      \
           \          \"secretKeyRef\": {\n                                    \"name\"\
@@ -1238,26 +1234,63 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef evaluate_model(\n    service_url: str,\n    tasks: str,\n   \
-          \ session_id: str,\n    model_path: str = \"Qwen/Qwen3-8B\",\n    max_length:\
-          \ int = 32768,\n    n_shots: int = 5,\n    max_gen_toks: int = 4096,\n \
-          \   reps: int = 1,\n    save_path: str = \"/tier2/evaluations\",\n    save_prefix:\
+          \ session_id: str,\n    reasoning_parser: str,\n    model_path: str = \"\
+          Qwen/Qwen3-8B\",\n    save_path: str = \"/tier2/evaluations\",\n    save_prefix:\
           \ str = \"baseline\",\n) -> None:\n    import os\n    import subprocess\n\
-          \    from pathlib import Path\n\n    # Parse and clean task list\n    task_list\
-          \ = [task.strip() for task in tasks.split(\",\") if task.strip()]\n\n  \
-          \  # Setup paths\n    session_dir = Path(save_path) / \"sessions\" / session_id\
-          \ / save_prefix\n    session_dir.mkdir(parents=True, exist_ok=True)\n  \
-          \  tmp_dir = session_dir / \"tmp\"\n    tmp_dir.mkdir(exist_ok=True)\n \
-          \   results_dir = session_dir / \"results\"\n    results_dir.mkdir(exist_ok=True)\n\
+          \    from pathlib import Path\n\n    # Configuration registry based on task\
+          \ name and reasoning mode\n    # Format: (task_name, reasoning_enabled):\
+          \ {n_shots, max_gen_toks, max_length, reps}\n    # max_length = max_gen_toks\
+          \ + 8192 (context buffer)\n    EVAL_CONFIG = {\n        # Non-reasoning\
+          \ configurations\n        (\"gsm8k_platinum_cot_llama\", False): {\"n_shots\"\
+          : 5, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\": 3},\n    \
+          \    (\"mmlu_cot_llama\", False): {\"n_shots\": 5, \"max_gen_toks\": 8192,\
+          \ \"max_length\": 16384, \"reps\": 3},\n        (\"mmlu_pro_chat\", False):\
+          \ {\"n_shots\": 5, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\"\
+          : 3},\n        (\"ifeval\", False): {\"n_shots\": 0, \"max_gen_toks\": 8192,\
+          \ \"max_length\": 16384, \"reps\": 3},\n        (\"math_500\", False): {\"\
+          n_shots\": 0, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\": 3},\n\
+          \        (\"lcb:codegeneration_v6\", False): {\"n_shots\": 0, \"max_gen_toks\"\
+          : 8192, \"max_length\": 16384, \"reps\": 3},\n        (\"mrcr\", False):\
+          \ {\"n_shots\": 0, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\"\
+          : 3},\n\n        # Reasoning-enabled configurations\n        (\"gsm8k_platinum_cot_llama\"\
+          , True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\": 40192,\
+          \ \"reps\": 3},\n        (\"mmlu_pro_chat\", True): {\"n_shots\": 0, \"\
+          max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"\
+          ifeval\", True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\"\
+          : 40192, \"reps\": 3},\n        (\"math_500\", True): {\"n_shots\": 0, \"\
+          max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"\
+          aime25\", True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\"\
+          : 40192, \"reps\": 8},\n        (\"gpqa:diamond\", True): {\"n_shots\":\
+          \ 0, \"max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n   \
+          \     (\"lcb:codegeneration_v6\", True): {\"n_shots\": 0, \"max_gen_toks\"\
+          : 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"mrcr\", True):\
+          \ {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\": 40192, \"reps\"\
+          : 3},\n    }\n\n    # Default configuration if task not found\n    DEFAULT_CONFIG\
+          \ = {\"n_shots\": 5, \"max_gen_toks\": 4096, \"max_length\": 32768, \"reps\"\
+          : 1}\n\n    # Determine if reasoning is enabled\n    reasoning_enabled =\
+          \ bool(reasoning_parser and reasoning_parser.strip())\n\n    # Parse and\
+          \ clean task list\n    task_list = [task.strip() for task in tasks.split(\"\
+          ,\") if task.strip()]\n\n    # Setup paths\n    session_dir = Path(save_path)\
+          \ / \"sessions\" / session_id / save_prefix\n    session_dir.mkdir(parents=True,\
+          \ exist_ok=True)\n    tmp_dir = session_dir / \"tmp\"\n    tmp_dir.mkdir(exist_ok=True)\n\
+          \    results_dir = session_dir / \"results\"\n    results_dir.mkdir(exist_ok=True)\n\
           \n    # Change to session directory\n    os.chdir(session_dir)\n\n    #\
           \ Ensure service_url uses the correct format for base_url\n    base_url\
           \ = service_url.rstrip(\"/\") + \"/v1\"\n\n    try:\n        for task_tag\
           \ in task_list:\n            print(f\"\\n{'='*60}\")\n            print(f\"\
           Evaluating task: {task_tag}\")\n            print(f\"{'='*60}\\n\")\n\n\
-          \            for i in range(1, reps + 1):\n                print(f\"Evaluation\
-          \ Run {i}/{reps}\")\n\n                seed = 1233 + i\n\n             \
-          \   # Build lm_eval command\n                cmd = [\n                 \
-          \   \"python\", \"-m\", \"lm_eval\",\n                    \"--model\", \"\
-          local-chat-completions\",\n                    \"--tasks\", task_tag,\n\
+          \            # Get configuration for this task\n            config_key =\
+          \ (task_tag, reasoning_enabled)\n            config = EVAL_CONFIG.get(config_key,\
+          \ DEFAULT_CONFIG)\n\n            n_shots = config[\"n_shots\"]\n       \
+          \     max_gen_toks = config[\"max_gen_toks\"]\n            max_length =\
+          \ config[\"max_length\"]\n            reps = config[\"reps\"]\n\n      \
+          \      print(f\"Configuration: n_shots={n_shots}, max_gen_toks={max_gen_toks},\
+          \ max_length={max_length}, reps={reps}, reasoning_enabled={reasoning_enabled}\"\
+          )\n\n            for i in range(1, reps + 1):\n                print(f\"\
+          Evaluation Run {i}/{reps}\")\n\n                seed = 1233 + i\n\n    \
+          \            # Build lm_eval command\n                cmd = [\n        \
+          \            \"python\", \"-m\", \"lm_eval\",\n                    \"--model\"\
+          , \"local-chat-completions\",\n                    \"--tasks\", task_tag,\n\
           \                    \"--model_args\", (\n                        f\"model={model_path},\"\
           \n                        f\"max_length={max_length},\"\n              \
           \          f\"base_url={base_url}/chat/completions,\"\n                \
@@ -1334,26 +1367,63 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef evaluate_model(\n    service_url: str,\n    tasks: str,\n   \
-          \ session_id: str,\n    model_path: str = \"Qwen/Qwen3-8B\",\n    max_length:\
-          \ int = 32768,\n    n_shots: int = 5,\n    max_gen_toks: int = 4096,\n \
-          \   reps: int = 1,\n    save_path: str = \"/tier2/evaluations\",\n    save_prefix:\
+          \ session_id: str,\n    reasoning_parser: str,\n    model_path: str = \"\
+          Qwen/Qwen3-8B\",\n    save_path: str = \"/tier2/evaluations\",\n    save_prefix:\
           \ str = \"baseline\",\n) -> None:\n    import os\n    import subprocess\n\
-          \    from pathlib import Path\n\n    # Parse and clean task list\n    task_list\
-          \ = [task.strip() for task in tasks.split(\",\") if task.strip()]\n\n  \
-          \  # Setup paths\n    session_dir = Path(save_path) / \"sessions\" / session_id\
-          \ / save_prefix\n    session_dir.mkdir(parents=True, exist_ok=True)\n  \
-          \  tmp_dir = session_dir / \"tmp\"\n    tmp_dir.mkdir(exist_ok=True)\n \
-          \   results_dir = session_dir / \"results\"\n    results_dir.mkdir(exist_ok=True)\n\
+          \    from pathlib import Path\n\n    # Configuration registry based on task\
+          \ name and reasoning mode\n    # Format: (task_name, reasoning_enabled):\
+          \ {n_shots, max_gen_toks, max_length, reps}\n    # max_length = max_gen_toks\
+          \ + 8192 (context buffer)\n    EVAL_CONFIG = {\n        # Non-reasoning\
+          \ configurations\n        (\"gsm8k_platinum_cot_llama\", False): {\"n_shots\"\
+          : 5, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\": 3},\n    \
+          \    (\"mmlu_cot_llama\", False): {\"n_shots\": 5, \"max_gen_toks\": 8192,\
+          \ \"max_length\": 16384, \"reps\": 3},\n        (\"mmlu_pro_chat\", False):\
+          \ {\"n_shots\": 5, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\"\
+          : 3},\n        (\"ifeval\", False): {\"n_shots\": 0, \"max_gen_toks\": 8192,\
+          \ \"max_length\": 16384, \"reps\": 3},\n        (\"math_500\", False): {\"\
+          n_shots\": 0, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\": 3},\n\
+          \        (\"lcb:codegeneration_v6\", False): {\"n_shots\": 0, \"max_gen_toks\"\
+          : 8192, \"max_length\": 16384, \"reps\": 3},\n        (\"mrcr\", False):\
+          \ {\"n_shots\": 0, \"max_gen_toks\": 8192, \"max_length\": 16384, \"reps\"\
+          : 3},\n\n        # Reasoning-enabled configurations\n        (\"gsm8k_platinum_cot_llama\"\
+          , True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\": 40192,\
+          \ \"reps\": 3},\n        (\"mmlu_pro_chat\", True): {\"n_shots\": 0, \"\
+          max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"\
+          ifeval\", True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\"\
+          : 40192, \"reps\": 3},\n        (\"math_500\", True): {\"n_shots\": 0, \"\
+          max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"\
+          aime25\", True): {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\"\
+          : 40192, \"reps\": 8},\n        (\"gpqa:diamond\", True): {\"n_shots\":\
+          \ 0, \"max_gen_toks\": 32000, \"max_length\": 40192, \"reps\": 3},\n   \
+          \     (\"lcb:codegeneration_v6\", True): {\"n_shots\": 0, \"max_gen_toks\"\
+          : 32000, \"max_length\": 40192, \"reps\": 3},\n        (\"mrcr\", True):\
+          \ {\"n_shots\": 0, \"max_gen_toks\": 32000, \"max_length\": 40192, \"reps\"\
+          : 3},\n    }\n\n    # Default configuration if task not found\n    DEFAULT_CONFIG\
+          \ = {\"n_shots\": 5, \"max_gen_toks\": 4096, \"max_length\": 32768, \"reps\"\
+          : 1}\n\n    # Determine if reasoning is enabled\n    reasoning_enabled =\
+          \ bool(reasoning_parser and reasoning_parser.strip())\n\n    # Parse and\
+          \ clean task list\n    task_list = [task.strip() for task in tasks.split(\"\
+          ,\") if task.strip()]\n\n    # Setup paths\n    session_dir = Path(save_path)\
+          \ / \"sessions\" / session_id / save_prefix\n    session_dir.mkdir(parents=True,\
+          \ exist_ok=True)\n    tmp_dir = session_dir / \"tmp\"\n    tmp_dir.mkdir(exist_ok=True)\n\
+          \    results_dir = session_dir / \"results\"\n    results_dir.mkdir(exist_ok=True)\n\
           \n    # Change to session directory\n    os.chdir(session_dir)\n\n    #\
           \ Ensure service_url uses the correct format for base_url\n    base_url\
           \ = service_url.rstrip(\"/\") + \"/v1\"\n\n    try:\n        for task_tag\
           \ in task_list:\n            print(f\"\\n{'='*60}\")\n            print(f\"\
           Evaluating task: {task_tag}\")\n            print(f\"{'='*60}\\n\")\n\n\
-          \            for i in range(1, reps + 1):\n                print(f\"Evaluation\
-          \ Run {i}/{reps}\")\n\n                seed = 1233 + i\n\n             \
-          \   # Build lm_eval command\n                cmd = [\n                 \
-          \   \"python\", \"-m\", \"lm_eval\",\n                    \"--model\", \"\
-          local-chat-completions\",\n                    \"--tasks\", task_tag,\n\
+          \            # Get configuration for this task\n            config_key =\
+          \ (task_tag, reasoning_enabled)\n            config = EVAL_CONFIG.get(config_key,\
+          \ DEFAULT_CONFIG)\n\n            n_shots = config[\"n_shots\"]\n       \
+          \     max_gen_toks = config[\"max_gen_toks\"]\n            max_length =\
+          \ config[\"max_length\"]\n            reps = config[\"reps\"]\n\n      \
+          \      print(f\"Configuration: n_shots={n_shots}, max_gen_toks={max_gen_toks},\
+          \ max_length={max_length}, reps={reps}, reasoning_enabled={reasoning_enabled}\"\
+          )\n\n            for i in range(1, reps + 1):\n                print(f\"\
+          Evaluation Run {i}/{reps}\")\n\n                seed = 1233 + i\n\n    \
+          \            # Build lm_eval command\n                cmd = [\n        \
+          \            \"python\", \"-m\", \"lm_eval\",\n                    \"--model\"\
+          , \"local-chat-completions\",\n                    \"--tasks\", task_tag,\n\
           \                    \"--model_args\", (\n                        f\"model={model_path},\"\
           \n                        f\"max_length={max_length},\"\n              \
           \          f\"base_url={base_url}/chat/completions,\"\n                \
@@ -1553,13 +1623,13 @@ deploymentSpec:
           \ repo: str = \"llm-evaluation-pipeline-results\",\n    base_branch: str\
           \ = \"main\",\n    repo_results_dir: str = \"results\"\n) -> str:\n    \"\
           \"\"Upload collated results JSON to GitHub as a PR.\"\"\"\n    import base64\n\
-          \    import os\n    import time\n    import uuid\n    from pathlib import\
-          \ Path\n    from urllib.parse import quote\n    import requests\n\n    #\
-          \ Read GitHub token from environment variable\n    github_token = os.environ.get(\"\
-          GITHUB_TOKEN\")\n    if not github_token:\n        raise ValueError(\"GITHUB_TOKEN\
-          \ environment variable not set\")\n\n    def github_request(method, url,\
-          \ token, json_data=None):\n        \"\"\"Helper function for GitHub API\
-          \ requests.\"\"\"\n        resp = requests.request(\n            method,\n\
+          \    import json\n    import os\n    import time\n    import uuid\n    from\
+          \ pathlib import Path\n    from urllib.parse import quote\n    import requests\n\
+          \n    # Read GitHub token from environment variable\n    github_token =\
+          \ os.environ.get(\"GITHUB_TOKEN\")\n    if not github_token:\n        raise\
+          \ ValueError(\"GITHUB_TOKEN environment variable not set\")\n\n    def github_request(method,\
+          \ url, token, json_data=None):\n        \"\"\"Helper function for GitHub\
+          \ API requests.\"\"\"\n        resp = requests.request(\n            method,\n\
           \            url,\n            headers={\n                \"Accept\": \"\
           application/vnd.github+json\",\n                \"Authorization\": f\"Bearer\
           \ {token}\",\n                \"X-GitHub-Api-Version\": \"2022-11-28\",\n\
@@ -1573,10 +1643,16 @@ deploymentSpec:
           \   collated_path = Path(save_path) / \"sessions\" / session_id / \"collated\"\
           \ / \"collated_results.json\"\n\n    if not collated_path.is_file():\n \
           \       raise FileNotFoundError(f\"Collated results file not found: {collated_path}\"\
-          )\n\n    # Create a timestamped filename for the upload\n    filename =\
-          \ f\"collated-{session_id}.json\"\n\n    # GitHub repository paths should\
-          \ not start with \"/\"\n    repo_results_dir = repo_results_dir.strip(\"\
-          /\")\n    repo_file_path = f\"{repo_results_dir}/{filename}\"\n\n    print(f\"\
+          )\n\n    # Load and parse collated results\n    with open(collated_path,\
+          \ \"r\") as f:\n        collated_data = json.load(f)\n\n    metadata = collated_data.get(\"\
+          metadata\", {})\n    model_id = metadata.get(\"model_id\", \"unknown-model\"\
+          )\n    compression_recipe = metadata.get(\"compression_recipe\", \"N/A\"\
+          )\n    baseline_results = collated_data.get(\"baseline_results\", [])\n\
+          \    compressed_results = collated_data.get(\"compressed_results\", [])\n\
+          \n    # Create a timestamped filename for the upload\n    filename = f\"\
+          collated-{session_id}.json\"\n\n    # GitHub repository paths should not\
+          \ start with \"/\"\n    repo_results_dir = repo_results_dir.strip(\"/\"\
+          )\n    repo_file_path = f\"{repo_results_dir}/{filename}\"\n\n    print(f\"\
           Uploading {collated_path} to {owner}/{repo}:{repo_file_path}\")\n\n    #\
           \ 1. Get the current commit SHA of base branch\n    ref_path = quote(f\"\
           heads/{base_branch}\", safe=\"/\")\n    base_ref = github_request(\n   \
@@ -1595,10 +1671,33 @@ deploymentSpec:
           \        \"PUT\",\n        f\"{GITHUB_API}/repos/{owner}/{repo}/contents/{contents_path}\"\
           ,\n        github_token,\n        json_data={\n            \"message\":\
           \ commit_message,\n            \"content\": encoded_content,\n         \
-          \   \"branch\": branch_name,\n        },\n    )\n\n    # 4. Open a PR from\
-          \ the new branch to base\n    pr_title = f\"Evaluation results for session\
-          \ {session_id}\"\n    pr_body = f\"Automated PR adding evaluation results:\
-          \ `{repo_file_path}`\\n\\nSession ID: `{session_id}`\"\n\n    pr_response\
+          \   \"branch\": branch_name,\n        },\n    )\n\n    # 4. Format PR body\
+          \ with aggregate stats\n    def format_results_table(results, result_type):\n\
+          \        \"\"\"Format results as a markdown table.\"\"\"\n        if not\
+          \ results:\n            return f\"No {result_type} results available.\\\
+          n\"\n\n        lines = [f\"### {result_type.title()} Results\\n\"]\n   \
+          \     lines.append(\"| Task | Metric | Mean | Std Dev | Reps |\")\n    \
+          \    lines.append(\"|------|--------|------|---------|------|\")\n\n   \
+          \     for result in sorted(results, key=lambda x: x[\"task_name\"]):\n \
+          \           task_name = result[\"task_name\"]\n            aggregate_stats\
+          \ = result.get(\"aggregate_stats\", {})\n            metrics = aggregate_stats.get(\"\
+          metrics\", {})\n            num_reps = result.get(\"num_repetitions\", 0)\n\
+          \n            for metric_name, metric_data in metrics.items():\n       \
+          \         value_stats = metric_data.get(\"value\", {})\n               \
+          \ mean = value_stats.get(\"mean\")\n                std = value_stats.get(\"\
+          std\")\n\n                mean_str = f\"{mean:.4f}\" if mean is not None\
+          \ else \"N/A\"\n                std_str = f\"{std:.4f}\" if std is not None\
+          \ else \"N/A\"\n\n                lines.append(f\"| {task_name} | {metric_name}\
+          \ | {mean_str} | {std_str} | {num_reps} |\")\n\n        return \"\\n\".join(lines)\n\
+          \n    pr_body_lines = [\n        f\"## Evaluation Results: {model_id}\"\
+          ,\n        \"\",\n        f\"**Session ID:** `{session_id}`\",\n       \
+          \ f\"**Model:** `{model_id}`\",\n        \"\",\n        \"**Compression\
+          \ Recipe:**\",\n        \"```yaml\",\n        compression_recipe.strip(),\n\
+          \        \"```\",\n        \"\",\n        format_results_table(baseline_results,\
+          \ \"baseline\"),\n        \"\",\n        format_results_table(compressed_results,\
+          \ \"compressed\"),\n        \"\",\n        f\"**Full results file:** `{repo_file_path}`\"\
+          ,\n    ]\n\n    pr_body = \"\\n\".join(pr_body_lines)\n    pr_title = f\"\
+          Evaluation results: {model_id} (session {session_id})\"\n\n    pr_response\
           \ = github_request(\n        \"POST\",\n        f\"{GITHUB_API}/repos/{owner}/{repo}/pulls\"\
           ,\n        github_token,\n        json_data={\n            \"title\": pr_title,\n\
           \            \"head\": branch_name,\n            \"base\": base_branch,\n\
@@ -1637,6 +1736,10 @@ root:
         - generate-session-id
         inputs:
           parameters:
+            compression_recipe:
+              componentInputParameter: compression_recipe
+            model_id:
+              componentInputParameter: model_id
             session_id:
               taskOutputParameter:
                 outputParameterKey: Output
@@ -1669,6 +1772,8 @@ root:
             pod_suffix:
               runtimeValue:
                 constant: b
+            reasoning_parser:
+              componentInputParameter: reasoning_parser
             session_id:
               taskOutputParameter:
                 outputParameterKey: Output
@@ -1692,6 +1797,8 @@ root:
             pod_suffix:
               runtimeValue:
                 constant: c
+            reasoning_parser:
+              componentInputParameter: reasoning_parser
             session_id:
               taskOutputParameter:
                 outputParameterKey: Output
@@ -1751,6 +1858,8 @@ root:
           parameters:
             model_path:
               componentInputParameter: model_id
+            reasoning_parser:
+              componentInputParameter: reasoning_parser
             save_prefix:
               runtimeValue:
                 constant: baseline
@@ -1777,6 +1886,8 @@ root:
           parameters:
             model_path:
               componentInputParameter: model_id
+            reasoning_parser:
+              componentInputParameter: reasoning_parser
             save_prefix:
               runtimeValue:
                 constant: compressed
@@ -1862,6 +1973,14 @@ root:
         defaultValue: Qwen/Qwen3-8B
         isOptional: true
         parameterType: STRING
+      pvc_name:
+        defaultValue: evaluation-pipeline-artifacts-tier-2
+        isOptional: true
+        parameterType: STRING
+      reasoning_parser:
+        defaultValue: ''
+        isOptional: true
+        parameterType: STRING
 schemaVersion: 2.1.0
 sdkVersion: kfp-2.16.1
 ---
@@ -1878,11 +1997,10 @@ platforms:
                 constant: evaluation-pipeline-model-server-tier-2
         exec-collate-results:
           pvcMount:
-          - constant: evaluation-pipeline-artifacts-tier-2
+          - componentInputParameter: pvc_name
             mountPath: /tier2
             pvcNameParameter:
-              runtimeValue:
-                constant: evaluation-pipeline-artifacts-tier-2
+              componentInputParameter: pvc_name
         exec-create-vllm-server:
           pvcMount:
           - constant: evaluation-pipeline-model-server-tier-2
@@ -1899,25 +2017,22 @@ platforms:
                 constant: evaluation-pipeline-model-server-tier-2
         exec-evaluate-model:
           pvcMount:
-          - constant: evaluation-pipeline-artifacts-tier-2
+          - componentInputParameter: pvc_name
             mountPath: /tier2
             pvcNameParameter:
-              runtimeValue:
-                constant: evaluation-pipeline-artifacts-tier-2
+              componentInputParameter: pvc_name
         exec-evaluate-model-2:
           pvcMount:
-          - constant: evaluation-pipeline-artifacts-tier-2
+          - componentInputParameter: pvc_name
             mountPath: /tier2
             pvcNameParameter:
-              runtimeValue:
-                constant: evaluation-pipeline-artifacts-tier-2
+              componentInputParameter: pvc_name
         exec-upload-results-to-github:
           pvcMount:
-          - constant: evaluation-pipeline-artifacts-tier-2
+          - componentInputParameter: pvc_name
             mountPath: /tier2
             pvcNameParameter:
-              runtimeValue:
-                constant: evaluation-pipeline-artifacts-tier-2
+              componentInputParameter: pvc_name
           secretAsEnv:
           - keyToEnv:
             - envVar: GITHUB_TOKEN

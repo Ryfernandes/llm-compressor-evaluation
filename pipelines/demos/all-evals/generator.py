@@ -42,6 +42,7 @@ def generate_session_id() -> str:
 )
 def create_vllm_server(
     session_id: str,
+    reasoning_parser: str,
     namespace: str = "machine-learning",
     pod_suffix: str = "baseline-server",
     service_account_name: str = "ml-workload",
@@ -177,13 +178,21 @@ echo " Local path: ${LOCAL_MODEL}"
 echo " TP=${TP}, DP=${DP}"
 echo "================================================================"
 
-exec vllm serve "$LOCAL_MODEL" \
-  --served-model-name "$MODEL" \
-  --tensor-parallel-size "${TP}" \
-  --data-parallel-size "${DP}" \
-  --max-model-len "${MAX_MODEL_LEN}" \
-  --host 0.0.0.0 \
+VLLM_ARGS=(
+  "$LOCAL_MODEL"
+  --served-model-name "$MODEL"
+  --tensor-parallel-size "${TP}"
+  --data-parallel-size "${DP}"
+  --max-model-len "${MAX_MODEL_LEN}"
+  --host 0.0.0.0
   --port 8000
+)
+
+if [ -n "${REASONING_PARSER}" ]; then
+  VLLM_ARGS+=(--reasoning-parser "${REASONING_PARSER}")
+fi
+
+exec vllm serve "${VLLM_ARGS[@]}"
 '''
     else:
         script = r'''
@@ -228,13 +237,21 @@ echo " Local path: ${LOCAL_MODEL}"
 echo " TP=${TP}, DP=${DP}"
 echo "================================================================"
 
-exec vllm serve "$LOCAL_MODEL" \
-  --served-model-name "$MODEL" \
-  --tensor-parallel-size "${TP}" \
-  --data-parallel-size "${DP}" \
-  --max-model-len "${MAX_MODEL_LEN}" \
-  --host 0.0.0.0 \
+VLLM_ARGS=(
+  "$LOCAL_MODEL"
+  --served-model-name "$MODEL"
+  --tensor-parallel-size "${TP}"
+  --data-parallel-size "${DP}"
+  --max-model-len "${MAX_MODEL_LEN}"
+  --host 0.0.0.0
   --port 8000
+)
+
+if [ -n "${REASONING_PARSER}" ]; then
+  VLLM_ARGS+=(--reasoning-parser "${REASONING_PARSER}")
+fi
+
+exec vllm serve "${VLLM_ARGS[@]}"
 '''
 
     pod_manifest = {
@@ -291,6 +308,7 @@ exec vllm serve "$LOCAL_MODEL" \
                         {"name": "DP", "value": dp},
                         {"name": "MAX_MODEL_LEN", "value": str(max_model_len)},
                         {"name": "TIER2_MODEL_STAGING_PATH", "value": tier2_model_staging_path},
+                        {"name": "REASONING_PARSER", "value": reasoning_parser},
                         {
                             "name": "HF_TOKEN",
                             "valueFrom": {
@@ -545,17 +563,44 @@ def evaluate_model(
     service_url: str,
     tasks: str,
     session_id: str,
+    reasoning_parser: str,
     model_path: str = "Qwen/Qwen3-8B",
-    max_length: int = 32768,
-    n_shots: int = 5,
-    max_gen_toks: int = 4096,
-    reps: int = 1,
     save_path: str = "/tier2/evaluations",
     save_prefix: str = "baseline",
 ) -> None:
     import os
     import subprocess
     from pathlib import Path
+
+    # Configuration registry based on task name and reasoning mode
+    # Format: (task_name, reasoning_enabled): {n_shots, max_gen_toks, max_length, reps}
+    # max_length = max_gen_toks + 8192 (context buffer)
+    EVAL_CONFIG = {
+        # Non-reasoning configurations
+        ("gsm8k_platinum_cot_llama", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("mmlu_cot_llama", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("mmlu_pro_chat", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("ifeval", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("math_500", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("lcb:codegeneration_v6", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+        ("mrcr", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+
+        # Reasoning-enabled configurations
+        ("gsm8k_platinum_cot_llama", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("mmlu_pro_chat", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("ifeval", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("math_500", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("aime25", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 8},
+        ("gpqa:diamond", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("lcb:codegeneration_v6", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+        ("mrcr", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
+    }
+
+    # Default configuration if task not found
+    DEFAULT_CONFIG = {"n_shots": 5, "max_gen_toks": 4096, "max_length": 32768, "reps": 1}
+
+    # Determine if reasoning is enabled
+    reasoning_enabled = bool(reasoning_parser and reasoning_parser.strip())
 
     # Parse and clean task list
     task_list = [task.strip() for task in tasks.split(",") if task.strip()]
@@ -579,6 +624,17 @@ def evaluate_model(
             print(f"\n{'='*60}")
             print(f"Evaluating task: {task_tag}")
             print(f"{'='*60}\n")
+
+            # Get configuration for this task
+            config_key = (task_tag, reasoning_enabled)
+            config = EVAL_CONFIG.get(config_key, DEFAULT_CONFIG)
+
+            n_shots = config["n_shots"]
+            max_gen_toks = config["max_gen_toks"]
+            max_length = config["max_length"]
+            reps = config["reps"]
+
+            print(f"Configuration: n_shots={n_shots}, max_gen_toks={max_gen_toks}, max_length={max_length}, reps={reps}, reasoning_enabled={reasoning_enabled}")
 
             for i in range(1, reps + 1):
                 print(f"Evaluation Run {i}/{reps}")
@@ -770,6 +826,8 @@ def pipeline(
                     scheme: "W4A16"
         """,
     evaluation_tasks: str = "gsm8k_platinum_cot_llama",
+    pvc_name: str = "evaluation-pipeline-artifacts-tier-2",
+    reasoning_parser: str = "",
 ):
     session_id_task = generate_session_id()
     session_id_task.set_caching_options(enable_caching=False)
@@ -795,7 +853,7 @@ def pipeline(
     """
     
     ### Baseline model flow
-    create_vllm_task = create_vllm_server(session_id=session_id_task.output, pod_suffix="b", model=model_id)
+    create_vllm_task = create_vllm_server(session_id=session_id_task.output, reasoning_parser=reasoning_parser, pod_suffix="b", model=model_id)
     create_vllm_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         create_vllm_task,
@@ -807,14 +865,14 @@ def pipeline(
     test_vllm_task.set_caching_options(enable_caching=False)
 
     evaluation_task = (
-        evaluate_model(session_id=session_id_task.output, service_url=test_vllm_task.output, tasks=evaluation_tasks, save_prefix="baseline", model_path=model_id)
+        evaluate_model(session_id=session_id_task.output, service_url=test_vllm_task.output, tasks=evaluation_tasks, reasoning_parser=reasoning_parser, save_prefix="baseline", model_path=model_id)
         .set_accelerator_type("nvidia.com/gpu")
         .set_accelerator_limit("1")
     )
     evaluation_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         evaluation_task,
-        pvc_name="evaluation-pipeline-artifacts-tier-2",
+        pvc_name=pvc_name,
         mount_path="/tier2"
     )
     delete_vllm_task = (
@@ -830,7 +888,7 @@ def pipeline(
     ### Compressed model flow
     quantization_task = compress_model(model_id=model_id, recipe=compression_recipe)
 
-    quantized_create_vllm_task = create_vllm_server(session_id=session_id_task.output, input_model=quantization_task.outputs["output_model"], pod_suffix="c")
+    quantized_create_vllm_task = create_vllm_server(session_id=session_id_task.output, reasoning_parser=reasoning_parser, input_model=quantization_task.outputs["output_model"], pod_suffix="c")
     quantized_create_vllm_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         quantized_create_vllm_task,
@@ -850,14 +908,14 @@ def pipeline(
     )
 
     quantized_evaluation_task = (
-        evaluate_model(session_id=session_id_task.output, service_url=quantized_test_vllm_task.output, tasks=evaluation_tasks, save_prefix="compressed", model_path=model_id)
+        evaluate_model(session_id=session_id_task.output, service_url=quantized_test_vllm_task.output, tasks=evaluation_tasks, reasoning_parser=reasoning_parser, save_prefix="compressed", model_path=model_id)
         .set_accelerator_type("nvidia.com/gpu")
         .set_accelerator_limit("1")
     )
     quantized_evaluation_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         quantized_evaluation_task,
-        pvc_name="evaluation-pipeline-artifacts-tier-2",
+        pvc_name=pvc_name,
         mount_path="/tier2"
     )
     quantized_delete_vllm_task = (
@@ -872,13 +930,13 @@ def pipeline(
 
     ### Collate results from both flows
     collate_task = (
-        collate_results(session_id=session_id_task.output)
+        collate_results(session_id=session_id_task.output, model_id=model_id, compression_recipe=compression_recipe)
         .after(delete_vllm_task, quantized_delete_vllm_task)
     )
     collate_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         collate_task,
-        pvc_name="evaluation-pipeline-artifacts-tier-2",
+        pvc_name=pvc_name,
         mount_path="/tier2"
     )
 
@@ -887,7 +945,7 @@ def pipeline(
     github_upload_task.set_caching_options(enable_caching=False)
     kubernetes.mount_pvc(
         github_upload_task,
-        pvc_name="evaluation-pipeline-artifacts-tier-2",
+        pvc_name=pvc_name,
         mount_path="/tier2"
     )
     kubernetes.use_secret_as_env(
