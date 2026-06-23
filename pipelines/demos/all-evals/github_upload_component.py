@@ -15,6 +15,7 @@ def upload_results_to_github(
 ) -> str:
     """Upload collated results JSON to GitHub as a PR."""
     import base64
+    import json
     import os
     import time
     import uuid
@@ -60,6 +61,16 @@ def upload_results_to_github(
 
     if not collated_path.is_file():
         raise FileNotFoundError(f"Collated results file not found: {collated_path}")
+
+    # Load and parse collated results
+    with open(collated_path, "r") as f:
+        collated_data = json.load(f)
+
+    metadata = collated_data.get("metadata", {})
+    model_id = metadata.get("model_id", "unknown-model")
+    compression_recipe = metadata.get("compression_recipe", "N/A")
+    baseline_results = collated_data.get("baseline_results", [])
+    compressed_results = collated_data.get("compressed_results", [])
 
     # Create a timestamped filename for the upload
     filename = f"collated-{session_id}.json"
@@ -111,9 +122,54 @@ def upload_results_to_github(
         },
     )
 
-    # 4. Open a PR from the new branch to base
-    pr_title = f"Evaluation results for session {session_id}"
-    pr_body = f"Automated PR adding evaluation results: `{repo_file_path}`\n\nSession ID: `{session_id}`"
+    # 4. Format PR body with aggregate stats
+    def format_results_table(results, result_type):
+        """Format results as a markdown table."""
+        if not results:
+            return f"No {result_type} results available.\n"
+
+        lines = [f"### {result_type.title()} Results\n"]
+        lines.append("| Task | Metric | Mean | Std Dev | Reps |")
+        lines.append("|------|--------|------|---------|------|")
+
+        for result in sorted(results, key=lambda x: x["task_name"]):
+            task_name = result["task_name"]
+            aggregate_stats = result.get("aggregate_stats", {})
+            metrics = aggregate_stats.get("metrics", {})
+            num_reps = result.get("num_repetitions", 0)
+
+            for metric_name, metric_data in metrics.items():
+                value_stats = metric_data.get("value", {})
+                mean = value_stats.get("mean")
+                std = value_stats.get("std")
+
+                mean_str = f"{mean:.4f}" if mean is not None else "N/A"
+                std_str = f"{std:.4f}" if std is not None else "N/A"
+
+                lines.append(f"| {task_name} | {metric_name} | {mean_str} | {std_str} | {num_reps} |")
+
+        return "\n".join(lines)
+
+    pr_body_lines = [
+        f"## Evaluation Results: {model_id}",
+        "",
+        f"**Session ID:** `{session_id}`",
+        f"**Model:** `{model_id}`",
+        "",
+        "**Compression Recipe:**",
+        "```yaml",
+        compression_recipe.strip(),
+        "```",
+        "",
+        format_results_table(baseline_results, "baseline"),
+        "",
+        format_results_table(compressed_results, "compressed"),
+        "",
+        f"**Full results file:** `{repo_file_path}`",
+    ]
+
+    pr_body = "\n".join(pr_body_lines)
+    pr_title = f"Evaluation results: {model_id} (session {session_id})"
 
     pr_response = github_request(
         "POST",

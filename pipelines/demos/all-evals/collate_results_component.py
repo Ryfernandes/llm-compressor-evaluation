@@ -4,6 +4,8 @@ from kfp import dsl
 @dsl.component(base_image="python:3.12")
 def collate_results(
     session_id: str,
+    model_id: str,
+    compression_recipe: str,
     save_path: str = "/tier2/evaluations",
 ):
     """Collate evaluation results from baseline and compressed model runs."""
@@ -222,6 +224,8 @@ def collate_results(
             "parser_version": "1.0",
             "parse_datetime": datetime.now(timezone.utc).isoformat(),
             "session_id": session_id,
+            "model_id": model_id,
+            "compression_recipe": compression_recipe,
             "total_results_parsed": len(all_results),
             "total_files_parsed": len(json_files),
             "unique_tasks": unique_tasks,
