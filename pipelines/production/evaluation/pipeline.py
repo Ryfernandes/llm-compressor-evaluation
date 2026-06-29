@@ -4,9 +4,9 @@ from components import (
     collate_results,
     create_vllm_server,
     delete_vllm_server,
-    generate_session_id,
     test_vllm_server,
     upload_to_github,
+    validate_session_id,
     evaluate_model,
 )
 
@@ -16,42 +16,29 @@ PIPELINE_NAME = "llm-evaluation"
     name=PIPELINE_NAME
 )
 def pipeline(
+    # Model spec
     model_id: str = "Qwen/Qwen3-8B",
-    compression_recipe: str = """
-        quant_stage:
-            quant_modifiers:
-                QuantizationModifier:
-                    ignore: ["lm_head"]
-                    targets: ["Linear"]
-                    scheme: "W4A16"
-        """,
-    evaluation_tasks: str = "gsm8k_platinum_cot_llama",
-    pvc_name: str = "evaluation-pipeline-artifacts-tier-2",
     reasoning_parser: str = "",
+    # Session spec
+    session_id: str = "evaluation-pipeline-artifacts-tier-2",
+    # Evaluation spec
+    evaluation_config_path: str = "gsm8k_platinum_cot_llama",
+    # PVC spec
+    artifacts_pvc_name: str = "evaluation-pipeline-artifacts-tier-2",
+    evaluation_config_pvc_name: str = "evaluation-pipeline-evaluation-configs-tier-2",
+    model_server_pvc_name: str = "evaluation-pipeline-model-server-tier-2",
 ):
-    session_id_task = generate_session_id()
-    session_id_task.set_caching_options(enable_caching=False)
+    """Pipeline to evaluate a model from HuggingFace using vLLM, lm-eval and lighteval."""
 
-    datafree_recipe = """
-        quant_stage:
-            quant_modifiers:
-                QuantizationModifier:
-                    ignore: ["lm_head"]
-                    targets: ["Linear"]
-                    scheme: "W4A16"
-    """
-
-    """
-    cleanup_task = delete_vllm_server(
-        session_id=session_id,
-        delete_tier2_pvc=False,
+    # Validate that the session_id has not already been used in the artifacts PVC.
+    # If it has not been used, make the session directory to "claim" the session_id.
+    validate_session_id_task = validate_session_id(session_id=session_id, mount_path="/artifacts")
+    kubernetes.mount_pvc(
+        validate_session_id_task,
+        pvc_name=artifacts_pvc_name,
+        mount_path="/artifacts"
     )
-    cleanup_task.set_caching_options(enable_caching=False)
-    
-    with dsl.ExitHandler(cleanup_task):
-    
-    """
-    
+
     ### Baseline model flow
     create_vllm_task = create_vllm_server(session_id=session_id_task.output, reasoning_parser=reasoning_parser, pod_suffix="b", model=model_id)
     create_vllm_task.set_caching_options(enable_caching=False)
