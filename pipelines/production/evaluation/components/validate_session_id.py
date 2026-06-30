@@ -11,7 +11,7 @@ def validate_session_id(session_id: str, mount_path: str) -> None:
     
     from pathlib import Path
 
-    artifacts_path = Path(mount_path) / "evaluation_artifacts" / "sessions"
+    artifacts_path = Path(mount_path) / "evaluation-artifacts" / "sessions"
     if not artifacts_path.exists():
         raise ValueError(f"Artifacts path {artifacts_path} does not exist")
 

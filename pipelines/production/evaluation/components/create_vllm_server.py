@@ -1,40 +1,124 @@
 from kfp import dsl
+from typing import Optional
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["kubernetes", "requests"]
+    packages_to_install=["kubernetes", "requests", "huggingface-hub"]
 )
 def create_vllm_server(
+    # Model spec
+    model: str,
+    # Session spec
     session_id: str,
-    reasoning_parser: str,
+    # Evaluation spec
+    config_filename: str,
+    # PVC spec
+    model_server_pvc_name: str,
+    configs_pvc_mount_path: str,
+    artifacts_pvc_name: str,
+    artifacts_pvc_mount_path: str,
+    # Pod spec
     namespace: str = "machine-learning",
-    pod_suffix: str = "baseline-server",
     service_account_name: str = "ml-workload",
-    model: str = "Qwen/Qwen3-8B",
-    input_model: dsl.Input[dsl.Artifact] = None,
     hf_secret_name: str = "ryan-test-hf-hub-secret",
-    tier2_pvc_name: str = "evaluation-pipeline-model-server-tier-2",
-    tier2_mount_path: str = "/tier2",
-    fs_group: int = 1000770000,
-    max_model_len: int = 32768,
-    tp: str = "1",
-    dp: str = "1",
     tier1_storage_class: str = "lvms-h100-tier1-storage",
-    tier1_size: str = "50Gi",
+    tier1_storage_buffer_gi: int = 10,
+    kv_cache_buffer_gi: int = 20,
+    gib_per_gpu: int = 76,
     node_selector_key: str = "node-role.kubernetes.io/up-h100mcp",
+    # Timeout spec
     wait_timeout_seconds: int = 2700,
+    # Logs spec
+    logs_filename: str = "vllm_server.log",
+    evaluation_statistics_filename: str = "evaluation_statistics.json",
 ) -> str:
     import time
     import requests
     import os
+    import math
     from pathlib import Path
     from kubernetes import client, config
     from kubernetes.client.rest import ApiException
+    from huggingface_hub import snapshot_download
+    import json
 
     config.load_incluster_config()
     core = client.CoreV1Api()
 
-    pod_name = f"{namespace}--{session_id}--{pod_suffix}"
+    evaluation_config_path = Path(configs_pvc_mount_path) / config_filename
+    if not evaluation_config_path.exists():
+        raise FileNotFoundError(f"Evaluation config file not found: {evaluation_config_path}")
+
+    try:
+        with open(evaluation_config_path, "r") as f:
+            evaluation_config = json.load(f)
+            model_args = evaluation_config.get("model", {})
+
+            reasoning_parser = model_args.get("reasoning_parser", "")
+            max_model_len = model_args.get("max_model_len", 40192)
+            tp = model_args.get("tp", 1)
+            dp = model_args.get("dp", 1)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read evaluation config file: {evaluation_config_path}") from e
+
+    # Dry run download to estimate model size
+    print(f"Running dry run to estimate size of model {model}...")
+
+    dry_run_files = snapshot_download(
+        repo_id=model,
+        token=os.environ.get("HF_TOKEN"),
+        dry_run=True,
+        allow_patterns=[
+            "*.json",
+            "*.safetensors",
+            "*.model",
+            "*.txt",
+            "*.jinja",
+            "tokenizer*",
+            "special_tokens_map.json",
+        ],
+        ignore_patterns=[
+            "original/**/*",
+            "*.bin",
+            "*.gguf",
+        ],
+    )
+
+    model_size_bytes = sum(
+        f.file_size for f in dry_run_files
+        if f.file_size is not None
+    )
+
+    model_size_gi = model_size_bytes / (1024 ** 3)
+    tier1_size_gi = int(model_size_gi) + tier1_storage_buffer_gi + 1
+    tier1_size = f"{tier1_size_gi}Gi"
+    inference_size_gi = model_size_gi + kv_cache_buffer_gi
+
+    print(f"Model size: {model_size_gi:.2f} GiB")
+    print(f"Tier1 storage size (with {tier1_storage_buffer_gi} GiB buffer): {tier1_size}")
+    print(f"Inference size (with {kv_cache_buffer_gi} GiB minimum KV cache buffer): {inference_size_gi:.2f} GiB")
+
+    # Validate and adjust tp based on model size
+    min_tp = math.ceil(inference_size_gi / gib_per_gpu)
+    if tp < min_tp:
+        # Round up to next power of 2
+        adjusted_tp = 2 ** math.ceil(math.log2(min_tp))
+        print(f"WARNING: tp={tp} is too low for model size {model_size_gi:.2f} GiB")
+        print(f"WARNING: Minimum tp based on {gib_per_gpu} GiB/GPU is {min_tp}")
+        print(f"WARNING: Increasing tp from {tp} to {adjusted_tp} (next power of 2)")
+        tp = adjusted_tp
+
+    gpus = tp * dp
+    print(f"Final configuration: tp={tp}, dp={dp}, gpus={gpus}")
+
+    session_path = Path(artifacts_pvc_mount_path) / "evaluation-artifacts" / "sessions" / session_id
+    if not session_path.exists():
+        raise FileNotFoundError(f"Session path {session_path} does not exist. Ensure validate_session_id has been run.")
+    
+    logs_path = session_path / "logs"
+    logs_path.mkdir(parents=True, exist_ok=True)
+
+    pod_name = f"evals-vllm-server-{session_id}"
     service_name = f"{pod_name}-svc"
 
     labels = {
@@ -43,57 +127,11 @@ def create_vllm_server(
 
     service_url = f"http://{service_name}.{namespace}.svc.cluster.local:8000"
 
-    # Determine if we're using a local model artifact or HuggingFace
-    use_local_artifact = input_model is not None
-    local_artifact_path = input_model.path if use_local_artifact else ""
-
-    # Copy artifact to tier2 staging area for the pod to access
-    tier2_model_staging_path = ""
-    if use_local_artifact:
-        print(f"[*] Artifact path: {local_artifact_path}")
-        artifact_path = Path(local_artifact_path)
-
-        if artifact_path.exists():
-            print(f"[+] Artifact path exists and is accessible from this component")
-
-            if artifact_path.is_dir():
-                files = list(artifact_path.glob("*"))
-                print(f"[+] Artifact directory contains {len(files)} items")
-
-                # Copy to tier2 staging area
-                tier2_staging_dir = Path(tier2_mount_path) / "model-staging" / session_id / pod_suffix
-                tier2_staging_dir.mkdir(parents=True, exist_ok=True)
-
-                print(f"[*] Copying model artifact to tier2 staging: {tier2_staging_dir}")
-                import shutil
-
-                # Copy all files from artifact to staging
-                for item in artifact_path.iterdir():
-                    dest = tier2_staging_dir / item.name
-                    if item.is_file():
-                        shutil.copy2(item, dest)
-                    else:
-                        shutil.copytree(item, dest, dirs_exist_ok=True)
-
-                tier2_model_staging_path = str(tier2_staging_dir)
-                print(f"[+] Model copied to tier2 staging: {tier2_model_staging_path}")
-
-                # Verify
-                copied_files = list(tier2_staging_dir.glob("*"))
-                print(f"[+] Verified {len(copied_files)} items in staging area")
-            else:
-                print(f"[!] Artifact path is a file, not a directory")
-                raise ValueError(f"Expected artifact directory, got file: {local_artifact_path}")
-        else:
-            print(f"[!] ERROR: Artifact path does not exist: {local_artifact_path}")
-            raise FileNotFoundError(f"Artifact path not accessible: {local_artifact_path}")
-
-    if use_local_artifact:
-        script = r'''
+    script = r'''
 set -eu
 
-export HF_HOME="/tier2/hf-hub"
-export HF_HUB_CACHE="/tier2/hf-hub"
+export HF_HOME="/tier1/hf-hub"
+export HF_HUB_CACHE="/tier1/hf-hub"
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
@@ -101,98 +139,29 @@ export NUMEXPR_NUM_THREADS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 mkdir -p \
-  "$HF_HOME" \
   "$HOME" \
   "$XDG_CACHE_HOME" \
   "$TORCH_HOME" \
   "$TORCHINDUCTOR_CACHE_DIR" \
   "$TRITON_CACHE_DIR" \
-  "$VLLM_CACHE_ROOT"
-
-LOCAL_MODEL="/tier1/model"
-TIER2_STAGING="${TIER2_MODEL_STAGING_PATH}"
-
-echo "[*] Copying model from tier2 staging to tier1 NVMe..."
-echo "[*] Source: ${TIER2_STAGING}"
-echo "[*] Destination: ${LOCAL_MODEL}"
-
-if [ ! -d "${TIER2_STAGING}" ]; then
-    echo "[!] ERROR: Tier2 staging directory does not exist: ${TIER2_STAGING}"
-    exit 1
-fi
-
-rm -rf "$LOCAL_MODEL"
-mkdir -p "$LOCAL_MODEL"
-
-# Fast local copy from tier2 to tier1
-echo "[*] Starting copy..."
-cp -rv "${TIER2_STAGING}"/. "$LOCAL_MODEL"/
-
-echo "[+] Model copied to ${LOCAL_MODEL}"
-echo "[*] Verifying files:"
-ls -lh "$LOCAL_MODEL"
-echo "[*] Total files:"
-find "$LOCAL_MODEL" -type f | wc -l
-
-echo "================================================================"
-echo " Starting vLLM Server"
-echo " Model name: ${MODEL}"
-echo " Source: tier2 staging (${TIER2_STAGING})"
-echo " Local path: ${LOCAL_MODEL}"
-echo " TP=${TP}, DP=${DP}"
-echo "================================================================"
-
-VLLM_ARGS=(
-  "$LOCAL_MODEL"
-  --served-model-name "$MODEL"
-  --tensor-parallel-size "${TP}"
-  --data-parallel-size "${DP}"
-  --max-model-len "${MAX_MODEL_LEN}"
-  --host 0.0.0.0
-  --port 8000
-)
-
-if [ -n "${REASONING_PARSER}" ]; then
-  VLLM_ARGS+=(--reasoning-parser "${REASONING_PARSER}")
-fi
-
-exec vllm serve "${VLLM_ARGS[@]}"
-'''
-    else:
-        script = r'''
-set -eu
-
-export HF_HOME="/tier2/hf-hub"
-export HF_HUB_CACHE="/tier2/hf-hub"
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
-
-mkdir -p \
-  "$HF_HOME" \
-  "$HOME" \
-  "$XDG_CACHE_HOME" \
-  "$TORCH_HOME" \
-  "$TORCHINDUCTOR_CACHE_DIR" \
-  "$TRITON_CACHE_DIR" \
-  "$VLLM_CACHE_ROOT"
+  "$VLLM_CACHE_ROOT" \
+  "$HF_HOME"
 
 LOCAL_MODEL="/tier1/model"
 
-echo "[*] Resolving/downloading model from Hugging Face..."
-CACHE_PATH=$(python3 -c "
+echo "[*] Downloading model ${MODEL} directly to tier1..."
+python3 -c "
 from huggingface_hub import snapshot_download
-print(snapshot_download('${MODEL}'))
-")
-echo "[+] HF cache path: ${CACHE_PATH}"
-
-echo "[*] Copying model to tier1 NVMe..."
-rm -rf "$LOCAL_MODEL"
-mkdir -p "$LOCAL_MODEL"
-cp -rL "$CACHE_PATH"/. "$LOCAL_MODEL"/
-echo "[+] Model copied to ${LOCAL_MODEL}"
+import os
+snapshot_download(
+    repo_id='${MODEL}',
+    cache_dir='${HF_HOME}',
+    token=os.environ.get('HF_TOKEN'),
+    local_dir='${LOCAL_MODEL}',
+    local_dir_use_symlinks=False,
+)
+"
+echo "[+] Model downloaded to ${LOCAL_MODEL}"
 
 echo "================================================================"
 echo " Starting vLLM Server"
@@ -215,7 +184,7 @@ if [ -n "${REASONING_PARSER}" ]; then
   VLLM_ARGS+=(--reasoning-parser "${REASONING_PARSER}")
 fi
 
-exec vllm serve "${VLLM_ARGS[@]}"
+exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
 '''
 
     pod_manifest = {
@@ -230,7 +199,7 @@ exec vllm serve "${VLLM_ARGS[@]}"
             "restartPolicy": "Never",
             "serviceAccountName": service_account_name,
             "securityContext": {
-                "fsGroup": fs_group,
+                "fsGroup": 1000770000,
                 "fsGroupChangePolicy": "Always",
             },
             "nodeSelector": {
@@ -260,19 +229,19 @@ exec vllm serve "${VLLM_ARGS[@]}"
                     },
                     "resources": {
                         "requests": {
-                            "nvidia.com/gpu": "1",
+                            "nvidia.com/gpu": str(gpus),
                         },
                         "limits": {
-                            "nvidia.com/gpu": "1",
+                            "nvidia.com/gpu": str(gpus),
                         },
                     },
                     "env": [
                         {"name": "MODEL", "value": model},
-                        {"name": "TP", "value": tp},
-                        {"name": "DP", "value": dp},
+                        {"name": "TP", "value": str(tp)},
+                        {"name": "DP", "value": str(dp)},
                         {"name": "MAX_MODEL_LEN", "value": str(max_model_len)},
-                        {"name": "TIER2_MODEL_STAGING_PATH", "value": tier2_model_staging_path},
                         {"name": "REASONING_PARSER", "value": reasoning_parser},
+                        {"name": "LOGS_PATH", "value": str(logs_path / logs_filename)},
                         {
                             "name": "HF_TOKEN",
                             "valueFrom": {
@@ -299,6 +268,7 @@ exec vllm serve "${VLLM_ARGS[@]}"
                     "volumeMounts": [
                         {"name": "tier1", "mountPath": "/tier1"},
                         {"name": "tier2", "mountPath": "/tier2"},
+                        {"name": "artifacts", "mountPath": artifacts_pvc_mount_path},
                     ],
                     "envFrom": [
                         {"configMapRef": {"name": "ceph-bucket-class"}},
@@ -331,9 +301,15 @@ exec vllm serve "${VLLM_ARGS[@]}"
                 {
                     "name": "tier2",
                     "persistentVolumeClaim": {
-                        "claimName": tier2_pvc_name,
+                        "claimName": model_server_pvc_name,
                     },
                 },
+                {
+                    "name": "artifacts",
+                    "persistentVolumeClaim": {
+                        "claimName": artifacts_pvc_name,
+                    },
+                }
             ],
         },
     }
@@ -440,6 +416,9 @@ exec vllm serve "${VLLM_ARGS[@]}"
             time.sleep(10)
         
         raise TimeoutError(f"Timed out waiting for {url}")
+    
+    def save_startup_statistics() -> None:
+        pass
     
     create_or_patch_service()
 

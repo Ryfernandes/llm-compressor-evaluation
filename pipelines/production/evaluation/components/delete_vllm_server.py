@@ -18,7 +18,7 @@ def delete_vllm_server(
     config.load_incluster_config()
     core = client.CoreV1Api()
 
-    pod_name = f"{namespace}--{session_id}--{pod_suffix}"
+    pod_name = f"evals-vllm-server-{session_id}"
     service_name = f"{pod_name}-svc"
 
     def ignore_404(fn, description: str) -> None:

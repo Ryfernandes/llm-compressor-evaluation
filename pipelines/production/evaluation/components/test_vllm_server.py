@@ -5,9 +5,11 @@ from kfp import dsl
     packages_to_install=["requests"],
 )
 def test_vllm_server(
+    # Model spec
+    model: str,
+    # Service spec
     service_url: str,
-    model: str = "Qwen/Qwen3-8B",
-) -> str:
+) -> None:
     import json
     import requests
 
@@ -43,5 +45,3 @@ def test_vllm_server(
     print(data["choices"][0]["message"]["content"])
 
     print("Test inference successful")
-
-    return service_url
