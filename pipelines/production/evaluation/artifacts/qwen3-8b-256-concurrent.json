@@ -1,0 +1,274 @@
+{
+  "results": [
+    {
+      "task_name": "gsm8k_platinum_cot_llama",
+      "model_name": "Qwen/Qwen3-8B",
+      "inference_parameters": {
+        "do_sample": true,
+        "temperature": 0.6,
+        "top_p": 0.9,
+        "top_k": 50,
+        "max_gen_toks": 8192,
+        "seed": 1234
+      },
+      "num_repetitions": 3,
+      "aggregate_stats": {
+        "evaluation_duration_seconds": {
+          "mean": 134.49488196233324,
+          "std": 15.252151265864082
+        },
+        "metrics": {
+          "exact_match,strict-match": {
+            "value": {
+              "mean": 0.9622277364212848,
+              "std": 0.0031314631076924246
+            },
+            "stderr": {
+              "mean": null,
+              "std": 0.0
+            }
+          }
+        }
+      },
+      "runs": [
+        {
+          "source_filename": "gsm8k_platinum_cot_llama_seed_1234.json",
+          "evaluation_datetime": 1782935321.1778135,
+          "evaluation_datetime_iso": "2026-07-01T19:48:41.177814+00:00",
+          "evaluation_duration_seconds": 146.30392446099995,
+          "metrics": {
+            "exact_match,strict-match": {
+              "value": 0.9586435070306039,
+              "stderr": null
+            }
+          },
+          "proxy_statistics": {
+            "prompt_tokens": {
+              "min": 722,
+              "max": 887,
+              "mean": 759.6385442514475,
+              "p95": 801.5999999999999,
+              "p99": 825.0
+            },
+            "completion_tokens": {
+              "min": 155,
+              "max": 8192,
+              "mean": 671.1521918941273,
+              "p95": 1508.1999999999998,
+              "p99": 3789.0000000000036
+            },
+            "total_tokens": {
+              "min": 905,
+              "max": 8953,
+              "mean": 1430.7907361455748,
+              "p95": 2261.7999999999993,
+              "p99": 4566.3200000000015
+            },
+            "latency_seconds": {
+              "min": 3.4098422527313232,
+              "max": 97.3958215713501,
+              "mean": 13.398007015830924,
+              "p95": 30.069770669937135,
+              "p99": 57.390348148346014
+            },
+            "finish_reason_counts": {
+              "stop": 1207,
+              "length": 2
+            },
+            "total_requests": 1209
+          },
+          "vllm_metrics": {
+            "queue_time_sum_seconds": 1.7329941869916183,
+            "queue_time_count": 1209.0,
+            "queue_time_avg_seconds": 0.0014334112382064668,
+            "preemptions_total": 0,
+            "prompt_tokens_total": 0,
+            "generation_tokens_total": 0,
+            "total_tokens": 0,
+            "throughput_tokens_per_second": 0.0,
+            "duration_seconds": 147.9437232017517
+          }
+        },
+        {
+          "source_filename": "gsm8k_platinum_cot_llama_seed_1235.json",
+          "evaluation_datetime": 1782935469.1156971,
+          "evaluation_datetime_iso": "2026-07-01T19:51:09.115697+00:00",
+          "evaluation_duration_seconds": 139.90574867299983,
+          "metrics": {
+            "exact_match,strict-match": {
+              "value": 0.9644334160463193,
+              "stderr": null
+            }
+          },
+          "proxy_statistics": {
+            "prompt_tokens": {
+              "min": 722,
+              "max": 887,
+              "mean": 759.6385442514475,
+              "p95": 801.5999999999999,
+              "p99": 825.0
+            },
+            "completion_tokens": {
+              "min": 167,
+              "max": 8192,
+              "mean": 646.4789081885856,
+              "p95": 1408.9999999999973,
+              "p99": 3451.8800000000065
+            },
+            "total_tokens": {
+              "min": 926,
+              "max": 8932,
+              "mean": 1406.117452440033,
+              "p95": 2182.6,
+              "p99": 4251.880000000008
+            },
+            "latency_seconds": {
+              "min": 3.4963150024414062,
+              "max": 78.43580746650696,
+              "mean": 12.934904508298837,
+              "p95": 27.653075647354125,
+              "p99": 51.97018634796142
+            },
+            "finish_reason_counts": {
+              "stop": 1208,
+              "length": 1
+            },
+            "total_requests": 1209
+          },
+          "vllm_metrics": {
+            "queue_time_sum_seconds": 2.2451674269941577,
+            "queue_time_count": 1209.0,
+            "queue_time_avg_seconds": 0.0018570450181920246,
+            "preemptions_total": 0,
+            "prompt_tokens_total": 0,
+            "generation_tokens_total": 0,
+            "total_tokens": 0,
+            "throughput_tokens_per_second": 0.0,
+            "duration_seconds": 141.50598239898682
+          }
+        },
+        {
+          "source_filename": "gsm8k_platinum_cot_llama_seed_1236.json",
+          "evaluation_datetime": 1782935610.74555,
+          "evaluation_datetime_iso": "2026-07-01T19:53:30.745550+00:00",
+          "evaluation_duration_seconds": 117.27497275299993,
+          "metrics": {
+            "exact_match,strict-match": {
+              "value": 0.9636062861869313,
+              "stderr": null
+            }
+          },
+          "proxy_statistics": {
+            "prompt_tokens": {
+              "min": 722,
+              "max": 887,
+              "mean": 759.6385442514475,
+              "p95": 801.5999999999999,
+              "p99": 825.0
+            },
+            "completion_tokens": {
+              "min": 178,
+              "max": 7214,
+              "mean": 643.8221670802316,
+              "p95": 1409.7999999999984,
+              "p99": 3178.3200000000015
+            },
+            "total_tokens": {
+              "min": 905,
+              "max": 7972,
+              "mean": 1403.460711331679,
+              "p95": 2191.399999999999,
+              "p99": 3958.680000000002
+            },
+            "latency_seconds": {
+              "min": 3.767599105834961,
+              "max": 100.60790657997131,
+              "mean": 13.011018064615646,
+              "p95": 28.098379373550372,
+              "p99": 54.76695453643799
+            },
+            "finish_reason_counts": {
+              "stop": 1209
+            },
+            "total_requests": 1209
+          },
+          "vllm_metrics": {
+            "queue_time_sum_seconds": 1.3016778419673756,
+            "queue_time_count": 1209.0,
+            "queue_time_avg_seconds": 0.0010766566103948517,
+            "preemptions_total": 0,
+            "prompt_tokens_total": 0,
+            "generation_tokens_total": 0,
+            "total_tokens": 0,
+            "throughput_tokens_per_second": 0.0,
+            "duration_seconds": 118.88357734680176
+          }
+        }
+      ],
+      "proxy_statistics_aggregate": {
+        "prompt_tokens": {
+          "min": 722,
+          "max": 887,
+          "mean": 759.6385442514475,
+          "p95": 802.0,
+          "p99": 825.0
+        },
+        "completion_tokens": {
+          "min": 155,
+          "max": 8192,
+          "mean": 653.8177557209815,
+          "p95": 1424.0,
+          "p99": 3539.2199999999993
+        },
+        "total_tokens": {
+          "min": 905,
+          "max": 8953,
+          "mean": 1413.456299972429,
+          "p95": 2208.699999999998,
+          "p99": 4333.979999999994
+        },
+        "latency_seconds": {
+          "min": 3.4098422527313232,
+          "max": 100.60790657997131,
+          "mean": 13.114643196248469,
+          "p95": 28.462484121322603,
+          "p99": 55.04775490283965
+        },
+        "finish_reason_counts": {
+          "stop": 3624,
+          "length": 3
+        },
+        "total_requests": 3627,
+        "num_seeds": 3
+      },
+      "vllm_metrics_aggregate": {
+        "queue_time_sum_seconds": 5.279839455953152,
+        "queue_time_count": 3627.0,
+        "queue_time_avg_seconds": 0.0014557042889311144,
+        "preemptions_total": 0,
+        "prompt_tokens_total": 0,
+        "generation_tokens_total": 0,
+        "total_tokens": 0,
+        "throughput_tokens_per_second": 0.0,
+        "duration_seconds": 408.3332829475403,
+        "num_seeds": 3
+      }
+    }
+  ],
+  "metadata": {
+    "parser_version": "1.0",
+    "parse_datetime": "2026-07-01T19:55:53.691811+00:00",
+    "session_id": "070120261542",
+    "model_id": "Qwen/Qwen3-8B",
+    "total_results_parsed": 3,
+    "total_files_parsed": 3,
+    "unique_tasks": [
+      "gsm8k_platinum_cot_llama"
+    ],
+    "unique_models": [
+      "Qwen/Qwen3-8B"
+    ],
+    "proxy_logs_parsed": true,
+    "vllm_metrics_parsed": true
+  }
+}

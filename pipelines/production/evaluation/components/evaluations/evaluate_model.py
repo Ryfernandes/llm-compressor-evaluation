@@ -2,7 +2,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["lm-eval[api]"]
+    packages_to_install=["lm-eval[api]", "requests", "prometheus-client"]
 )
 def evaluate_model(
     service_url: str,
@@ -10,12 +10,16 @@ def evaluate_model(
     session_id: str,
     reasoning_parser: str,
     model_path: str = "Qwen/Qwen3-8B",
-    save_path: str = "/tier2/evaluations",
-    save_prefix: str = "baseline",
+    artifacts_pvc_mount_path: str = "/artifacts",
+    num_concurrent: int = 128,
 ) -> None:
     import os
     import subprocess
+    import requests
+    import json
+    import time
     from pathlib import Path
+    from prometheus_client.parser import text_string_to_metric_families
 
     # Configuration registry based on task name and reasoning mode
     # Format: (task_name, reasoning_enabled): {n_shots, max_gen_toks, max_length, reps}
@@ -51,18 +55,130 @@ def evaluate_model(
     task_list = [task.strip() for task in tasks.split(",") if task.strip()]
 
     # Setup paths
-    session_dir = Path(save_path) / "sessions" / session_id / save_prefix
-    session_dir.mkdir(parents=True, exist_ok=True)
+    session_dir = Path(artifacts_pvc_mount_path) / "evaluation-artifacts" / "sessions" / session_id
+    results_dir = session_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = session_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = session_dir / "tmp"
     tmp_dir.mkdir(exist_ok=True)
-    results_dir = session_dir / "results"
-    results_dir.mkdir(exist_ok=True)
+
+    # Setup vLLM metrics log file
+    vllm_metrics_log = logs_dir / "vllm_metrics.jsonl"
 
     # Change to session directory
     os.chdir(session_dir)
 
     # Ensure service_url uses the correct format for base_url
     base_url = service_url.rstrip("/") + "/v1"
+
+    # Helper functions for proxy control
+    def set_proxy_task(task_id: str, seed: int):
+        """Set the task_id and seed in the proxy."""
+        response = requests.post(
+            f"{service_url}/set-proxy-task",
+            json={"task_id": task_id, "seed": seed},
+            timeout=10
+        )
+        response.raise_for_status()
+        print(f"Proxy task set: task_id={task_id}, seed={seed}")
+
+    def enable_proxy_logging():
+        """Enable logging in the proxy."""
+        response = requests.post(f"{service_url}/start-logging", timeout=10)
+        response.raise_for_status()
+        print("Proxy logging enabled")
+
+    def disable_proxy_logging():
+        """Disable logging in the proxy."""
+        response = requests.post(f"{service_url}/stop-logging", timeout=10)
+        response.raise_for_status()
+        print("Proxy logging disabled")
+
+    def get_vllm_metrics():
+        """Fetch and parse vLLM Prometheus metrics."""
+        try:
+            response = requests.get(f"{service_url}/metrics", timeout=30)
+            response.raise_for_status()
+
+            metrics = {}
+            available_metrics = []
+
+            for family in text_string_to_metric_families(response.text):
+                available_metrics.append(family.name)
+
+                # Queue time histogram metrics (uses colon namespace)
+                if family.name == "vllm:request_queue_time_seconds":
+                    for sample in family.samples:
+                        if sample.name == "vllm:request_queue_time_seconds_sum":
+                            metrics["queue_time_sum"] = sample.value
+                        elif sample.name == "vllm:request_queue_time_seconds_count":
+                            metrics["queue_time_count"] = sample.value
+
+                # Counter metrics (note: no _total suffix in family name, but may be in sample name)
+                elif family.name == "vllm:num_preemptions":
+                    for sample in family.samples:
+                        # Sample name might be vllm:num_preemptions_total or vllm:num_preemptions
+                        metrics["preemptions_total"] = sample.value
+                        break  # Take first sample
+
+                elif family.name == "vllm:prompt_tokens":
+                    for sample in family.samples:
+                        # Sample name might be vllm:prompt_tokens_total or vllm:prompt_tokens
+                        metrics["prompt_tokens_total"] = sample.value
+                        break  # Take first sample
+
+                elif family.name == "vllm:generation_tokens":
+                    for sample in family.samples:
+                        # Sample name might be vllm:generation_tokens_total or vllm:generation_tokens
+                        metrics["generation_tokens_total"] = sample.value
+                        break  # Take first sample
+
+            # Debug: Print available metrics if any expected ones are missing
+            required_metrics = ["queue_time_sum", "queue_time_count", "preemptions_total",
+                              "prompt_tokens_total", "generation_tokens_total"]
+            missing = [m for m in required_metrics if m not in metrics]
+
+            if missing:
+                raise ValueError(f"Critical vLLM metrics missing: {missing}. Available: {sorted(set(available_metrics))}")
+
+            return metrics
+        except Exception as e:
+            print(f"ERROR: Failed to fetch vLLM metrics: {e}")
+            raise
+
+    def compute_metric_deltas(start_metrics, end_metrics, duration_seconds):
+        """Compute deltas between start and end metrics."""
+        if not start_metrics or not end_metrics:
+            return None
+
+        delta = {}
+
+        # Queue time metrics
+        queue_time_sum_delta = end_metrics.get("queue_time_sum", -1) - start_metrics.get("queue_time_sum", 0)
+        queue_time_count_delta = end_metrics.get("queue_time_count", -1) - start_metrics.get("queue_time_count", 0)
+
+        delta["queue_time_sum_seconds"] = queue_time_sum_delta
+        delta["queue_time_count"] = queue_time_count_delta
+        delta["queue_time_avg_seconds"] = queue_time_sum_delta / queue_time_count_delta if queue_time_count_delta > 0 else 0
+
+        # Preemptions
+        delta["preemptions_total"] = end_metrics.get("preemptions_total", -1) - start_metrics.get("preemptions_total", 0)
+
+        # Token counts
+        prompt_tokens_delta = end_metrics.get("prompt_tokens_total", -1) - start_metrics.get("prompt_tokens_total", 0)
+        generation_tokens_delta = end_metrics.get("generation_tokens_total", -1) - start_metrics.get("generation_tokens_total", 0)
+        total_tokens_delta = prompt_tokens_delta + generation_tokens_delta
+
+        delta["prompt_tokens_total"] = prompt_tokens_delta
+        delta["generation_tokens_total"] = generation_tokens_delta
+        delta["total_tokens"] = total_tokens_delta
+
+        # Throughput (tokens per second)
+        delta["throughput_tokens_per_second"] = total_tokens_delta / duration_seconds if duration_seconds > 0 else 0
+        delta["duration_seconds"] = duration_seconds
+
+        return delta
 
     try:
         for task_tag in task_list:
@@ -86,6 +202,14 @@ def evaluate_model(
 
                 seed = 1233 + i
 
+                # Configure proxy for this task/seed
+                set_proxy_task(task_tag, seed)
+                enable_proxy_logging()
+
+                # Collect vLLM metrics before evaluation
+                start_metrics = get_vllm_metrics()
+                start_time_eval = time.time()
+
                 # Build lm_eval command
                 cmd = [
                     "python", "-m", "lm_eval",
@@ -95,7 +219,7 @@ def evaluate_model(
                         f"model={model_path},"
                         f"max_length={max_length},"
                         f"base_url={base_url}/chat/completions,"
-                        f"num_concurrent=128,"
+                        f"num_concurrent={num_concurrent},"
                         f"max_retries=3,"
                         f"tokenized_requests=False,"
                         f"tokenizer_backend=None,"
@@ -121,6 +245,29 @@ def evaluate_model(
                 print(result.stdout)
                 if result.stderr:
                     print("STDERR:", result.stderr)
+
+                # Collect vLLM metrics after evaluation
+                end_time_eval = time.time()
+                end_metrics = get_vllm_metrics()
+                duration_seconds = end_time_eval - start_time_eval
+
+                # Compute metric deltas
+                metric_deltas = compute_metric_deltas(start_metrics, end_metrics, duration_seconds)
+
+                # Log metrics to JSONL
+                if metric_deltas:
+                    log_entry = {
+                        "task_id": task_tag,
+                        "seed": seed,
+                        "metrics": metric_deltas,
+                        "timestamp": end_time_eval,
+                    }
+                    with open(vllm_metrics_log, "a") as f:
+                        f.write(json.dumps(log_entry) + "\n")
+                    print(f"vLLM metrics logged: {metric_deltas}")
+
+                # Disable proxy logging after evaluation completes
+                disable_proxy_logging()
 
                 print(f"Evaluation complete, tried moving output to {str(tmp_dir)}")
 
