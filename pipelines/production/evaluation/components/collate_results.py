@@ -198,7 +198,6 @@ def collate_results(
             prompt_tokens = [m["prompt_tokens_total"] for m in metrics_list if "prompt_tokens_total" in m]
             generation_tokens = [m["generation_tokens_total"] for m in metrics_list if "generation_tokens_total" in m]
             total_tokens = [m["total_tokens"] for m in metrics_list if "total_tokens" in m]
-            throughputs = [m["throughput_tokens_per_second"] for m in metrics_list if "throughput_tokens_per_second" in m]
             durations = [m["duration_seconds"] for m in metrics_list if "duration_seconds" in m]
 
             aggregate = {
@@ -209,7 +208,6 @@ def collate_results(
                 "prompt_tokens_total": sum(prompt_tokens) if prompt_tokens else 0,
                 "generation_tokens_total": sum(generation_tokens) if generation_tokens else 0,
                 "total_tokens": sum(total_tokens) if total_tokens else 0,
-                "throughput_tokens_per_second": statistics.mean(throughputs) if throughputs else 0,
                 "duration_seconds": sum(durations) if durations else 0,
                 "num_seeds": len(metrics_list),
             }

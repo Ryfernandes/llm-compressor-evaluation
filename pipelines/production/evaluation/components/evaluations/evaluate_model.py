@@ -173,9 +173,6 @@ def evaluate_model(
         delta["prompt_tokens_total"] = prompt_tokens_delta
         delta["generation_tokens_total"] = generation_tokens_delta
         delta["total_tokens"] = total_tokens_delta
-
-        # Throughput (tokens per second)
-        delta["throughput_tokens_per_second"] = total_tokens_delta / duration_seconds if duration_seconds > 0 else 0
         delta["duration_seconds"] = duration_seconds
 
         return delta
