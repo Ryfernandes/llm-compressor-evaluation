@@ -4,23 +4,31 @@ from kfp import dsl
     base_image="python:3.12",
     packages_to_install=["requests"],
 )
-def test_vllm_server(
+def test_vllm_proxy(
     # Model spec
     model: str,
     # Service spec
-    service_url: str,
+    proxy_url: str,
 ) -> None:
     import json
     import requests
 
-    models_url = f"{service_url}/v1/models"
-    print(f"Checking {models_url}")
+    # Test health endpoint
+    health_url = f"{proxy_url}/health"
+    print(f"Testing health endpoint: {health_url}")
+    health_response = requests.get(health_url, timeout=10)
+    health_response.raise_for_status()
+    print(json.dumps(health_response.json(), indent=2))
 
+    # Test models endpoint
+    models_url = f"{proxy_url}/v1/models"
+    print(f"\nTesting models endpoint: {models_url}")
     models_response = requests.get(models_url, timeout=30)
     models_response.raise_for_status()
     print(json.dumps(models_response.json(), indent=2))
 
-    chat_url = f"{service_url}/v1/chat/completions"
+    # Test chat completions
+    chat_url = f"{proxy_url}/v1/chat/completions"
     payload = {
         "model": model,
         "messages": [
@@ -36,6 +44,7 @@ def test_vllm_server(
         },
     }
 
+    print(f"\nTesting chat completions: {chat_url}")
     response = requests.post(chat_url, json=payload, timeout=120)
     response.raise_for_status()
 
@@ -44,4 +53,4 @@ def test_vllm_server(
     print("Assistant response:")
     print(data["choices"][0]["message"]["content"])
 
-    print("Test inference successful")
+    print("\nProxy test successful")

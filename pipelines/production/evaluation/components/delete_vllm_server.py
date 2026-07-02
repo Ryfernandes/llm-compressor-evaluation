@@ -10,6 +10,7 @@ def delete_vllm_server(
     pod_suffix: str = "baseline-server",
     tier2_pvc_name: str = "evaluation-pipeline-model-server-tier-2",
     delete_tier2_pvc: bool = False,
+    delete_proxy: bool = True,
 ) -> None:
     import time
     from kubernetes import client, config
@@ -18,8 +19,11 @@ def delete_vllm_server(
     config.load_incluster_config()
     core = client.CoreV1Api()
 
-    pod_name = f"{namespace}--{session_id}--{pod_suffix}"
+    pod_name = f"evals-vllm-server-{session_id}"
     service_name = f"{pod_name}-svc"
+
+    proxy_pod_name = f"evals-vllm-proxy-{session_id}"
+    proxy_service_name = f"{proxy_pod_name}-svc"
 
     def ignore_404(fn, description: str) -> None:
         try:
@@ -40,6 +44,18 @@ def delete_vllm_server(
         lambda: core.delete_namespaced_service(name=service_name, namespace=namespace),
         f"service/{service_name}",
     )
+
+    # Clean up proxy resources
+    if delete_proxy:
+        ignore_404(
+            lambda: core.delete_namespaced_pod(name=proxy_pod_name, namespace=namespace),
+            f"pod/{proxy_pod_name}",
+        )
+
+        ignore_404(
+            lambda: core.delete_namespaced_service(name=proxy_service_name, namespace=namespace),
+            f"service/{proxy_service_name}",
+        )
 
     tier1_pvc_name = f"{pod_name}-tier1"
     ignore_404(
