@@ -11,6 +11,7 @@ from components import (
     validate_session_id,
     validate_config,
     lm_eval_evaluation,
+    save_startup_statistics,
 )
 
 PIPELINE_NAME = "llm-evaluation"
@@ -114,6 +115,21 @@ def pipeline(
         test_proxy_task = test_vllm_proxy(proxy_url=create_proxy_task.output, model=model_id)
         test_proxy_task.set_caching_options(enable_caching=False)
 
+        # Save vLLM startup statistics from server logs
+        save_stats_task = (
+            save_startup_statistics(
+                session_id=session_id,
+                artifacts_pvc_mount_path="/artifacts"
+            )
+            .after(test_proxy_task)
+        )
+        save_stats_task.set_caching_options(enable_caching=False)
+        kubernetes.mount_pvc(
+            save_stats_task,
+            pvc_name=artifacts_pvc_name,
+            mount_path="/artifacts"
+        )
+
         # Run evaluation using proxy URL (routes through proxy for logging)
         lm_evaluation_task = (
             lm_eval_evaluation(
@@ -124,7 +140,7 @@ def pipeline(
                 artifacts_pvc_mount_path="/artifacts",
                 configs_pvc_mount_path="/configs"
             )
-            .after(test_proxy_task)
+            .after(save_stats_task)
             .set_accelerator_type("nvidia.com/gpu")
             .set_accelerator_limit("1")
         )
