@@ -5,7 +5,9 @@ from kfp import dsl
 def collate_results(
     session_id: str,
     model_id: str,
+    config_filename: str,
     artifacts_pvc_mount_path: str = "/artifacts",
+    configs_pvc_mount_path: str = "/configs",
 ):
     """Collate evaluation results from model evaluation runs."""
     import json
@@ -63,7 +65,7 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
-    def extract_lmeval_result(data, task_name, source_filename):
+    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
         metrics = extract_lmeval_metrics(task_name, task_results)
@@ -92,10 +94,11 @@ def collate_results(
                 "top_k": gen_kwargs.get("top_k"),
                 "max_gen_toks": gen_kwargs.get("max_gen_toks"),
                 "seed": gen_kwargs.get("seed"),
+                "concurrency": task_concurrency_map.get(task_name),
             },
         }
 
-    def parse_json_files(json_files):
+    def parse_json_files(json_files, task_concurrency_map):
         """Parse all JSON files and extract results."""
         all_results = []
         for json_file_path, source_dir in json_files:
@@ -112,7 +115,7 @@ def collate_results(
 
                 for task_name in json_data.get("results", {}).keys():
                     if task_name in METRICS_REGISTRY:
-                        result = extract_lmeval_result(json_data, task_name, source_filename)
+                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map)
                         result["source_directory"] = source_dir
                         all_results.append(result)
                     else:
@@ -492,6 +495,19 @@ def collate_results(
     vllm_metrics_path = logs_dir / "vllm_metrics.jsonl"
     vllm_log_stats_path = logs_dir / "vllm_log_statistics.json"
 
+    # Load config to get task concurrency mapping
+    config_path = Path(configs_pvc_mount_path) / config_filename
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # Create task_name -> concurrency mapping
+    task_concurrency = {}
+    for task in config.get("tasks", []):
+        task_tag = task.get("tag")
+        concurrency = task.get("concurrency")
+        if task_tag and concurrency:
+            task_concurrency[task_tag] = concurrency
+
     if not results_dir.exists():
         print(f"No results directory found at {results_dir}")
         return
@@ -529,7 +545,7 @@ def collate_results(
     task_log_aggregates = aggregate_log_stats_by_task(task_seed_log_samples)
     print(f"Aggregated log statistics for {len(task_log_aggregates)} tasks")
 
-    all_results = parse_json_files(json_files)
+    all_results = parse_json_files(json_files, task_concurrency)
     grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats)
 
     # Add task-level aggregates to results

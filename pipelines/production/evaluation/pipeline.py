@@ -119,7 +119,9 @@ def pipeline(
         save_stats_task = (
             save_startup_statistics(
                 session_id=session_id,
-                artifacts_pvc_mount_path="/artifacts"
+                config_filename=config_filename,
+                artifacts_pvc_mount_path="/artifacts",
+                configs_pvc_mount_path="/configs"
             )
             .after(test_proxy_task)
         )
@@ -128,6 +130,11 @@ def pipeline(
             save_stats_task,
             pvc_name=artifacts_pvc_name,
             mount_path="/artifacts"
+        )
+        kubernetes.mount_pvc(
+            save_stats_task,
+            pvc_name=configs_pvc_name,
+            mount_path="/configs"
         )
 
         # Run evaluation using proxy URL (routes through proxy for logging)
@@ -161,7 +168,9 @@ def pipeline(
             collate_results(
                 session_id=session_id,
                 model_id=model_id,
-                artifacts_pvc_mount_path="/artifacts"
+                config_filename=config_filename,
+                artifacts_pvc_mount_path="/artifacts",
+                configs_pvc_mount_path="/configs"
             )
             .after(lm_evaluation_task)
         )
@@ -170,6 +179,11 @@ def pipeline(
             collate_task,
             pvc_name=artifacts_pvc_name,
             mount_path="/artifacts"
+        )
+        kubernetes.mount_pvc(
+            collate_task,
+            pvc_name=configs_pvc_name,
+            mount_path="/configs"
         )
 
         """

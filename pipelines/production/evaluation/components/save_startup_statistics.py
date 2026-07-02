@@ -6,8 +6,11 @@ from kfp import dsl
 def save_startup_statistics(
     # Session spec
     session_id: str,
+    # Config spec
+    config_filename: str,
     # PVC spec
     artifacts_pvc_mount_path: str,
+    configs_pvc_mount_path: str,
     # Logs spec
     logs_filename: str = "vllm_server.log",
     evaluation_statistics_filename: str = "vllm_log_statistics.json",
@@ -25,6 +28,12 @@ def save_startup_statistics(
 
     if not log_file_path.exists():
         raise FileNotFoundError(f"Log file not found at {log_file_path}")
+
+    # Load config to get max_model_len
+    config_path = Path(configs_pvc_mount_path) / config_filename
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    max_model_len = config["model"]["max_model_len"]
 
     # Read the log file
     with open(log_file_path, 'r') as f:
@@ -85,6 +94,9 @@ def save_startup_statistics(
             f"This likely indicates that vLLM has changed its logging format. "
             f"Please review the log file at {log_file_path} and update the parsing logic in save_startup_statistics()."
         )
+
+    # Add max_model_len from config
+    stats['max_model_len'] = max_model_len
 
     # Create the output structure
     output = {
