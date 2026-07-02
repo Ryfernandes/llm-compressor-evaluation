@@ -51,7 +51,7 @@ def save_startup_statistics(
             {'vllm_version'}
         ),
         'model_loading': (
-            r'Model loading took ([\d.]+) GiB memory and ([\d.]+) seconds',
+            r'Model loading took ([\d.]+) GiB (?:memory )?and ([\d.]+) seconds',
             lambda m: {'model_size': float(m.group(1)), 'model_load_time': float(m.group(2))},
             {'model_size', 'model_load_time'}
         ),
