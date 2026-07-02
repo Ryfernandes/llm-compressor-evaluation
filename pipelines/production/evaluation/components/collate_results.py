@@ -377,6 +377,8 @@ def collate_results(
             grouped_results.append({
                 "task_name": task_name,
                 "model_name": model_name,
+                "harness": first_run.get("harness"),
+                "harness_version": first_run.get("harness_version"),
                 "inference_parameters": first_run["inference_parameters"],
                 "num_repetitions": len(runs),
                 "aggregate_stats": compute_aggregate_stats(runs),
