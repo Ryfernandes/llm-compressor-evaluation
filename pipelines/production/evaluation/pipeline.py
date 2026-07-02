@@ -30,6 +30,7 @@ def pipeline(
     artifacts_pvc_name: str = "evaluation-pipeline-artifacts-tier-2",
     configs_pvc_name: str = "evaluation-pipeline-configs-tier-2",
     model_server_pvc_name: str = "evaluation-pipeline-model-server-tier-2",
+    packages_pvc_name: str = "evaluation-pipeline-packages-tier-2",
 ):
     """Pipeline to evaluate a model from HuggingFace using vLLM, lm-eval and lighteval."""
 
@@ -145,7 +146,8 @@ def pipeline(
                 session_id=session_id,
                 model_path=model_id,
                 artifacts_pvc_mount_path="/artifacts",
-                configs_pvc_mount_path="/configs"
+                configs_pvc_mount_path="/configs",
+                packages_pvc_mount_path="/packages"
             )
             .after(save_stats_task)
             .set_accelerator_type("nvidia.com/gpu")
@@ -161,6 +163,11 @@ def pipeline(
             lm_evaluation_task,
             pvc_name=configs_pvc_name,
             mount_path="/configs"
+        )
+        kubernetes.mount_pvc(
+            lm_evaluation_task,
+            pvc_name=packages_pvc_name,
+            mount_path="/packages"
         )
 
         # Collate results from evaluation runs
