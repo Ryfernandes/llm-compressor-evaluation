@@ -4,7 +4,7 @@ from kfp import dsl
     base_image="python:3.12",
     packages_to_install=["lm-eval[api]", "requests", "prometheus-client"]
 )
-def evaluate_model(
+def lm_eval_evaluation(
     service_url: str,
     tasks: str,
     session_id: str,

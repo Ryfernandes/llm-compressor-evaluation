@@ -9,7 +9,7 @@ from components import (
     test_vllm_proxy,
     upload_to_github,
     validate_session_id,
-    evaluate_model,
+    lm_eval_evaluation,
 )
 
 PIPELINE_NAME = "llm-evaluation"
@@ -108,7 +108,7 @@ def pipeline(
 
         # Run evaluation using proxy URL (routes through proxy for logging)
         evaluation_task = (
-            evaluate_model(
+            lm_eval_evaluation(
                 service_url=create_proxy_task.output,
                 tasks=EVALUATION_TASKS,
                 session_id=session_id,
