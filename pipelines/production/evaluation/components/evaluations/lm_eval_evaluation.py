@@ -2,7 +2,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["lm-eval[api,ifeval,multilingual]", "requests", "prometheus-client"]
+    packages_to_install=["lm_eval[api,ifeval,multilingual] @ git+https://github.com/neuralmagic/lm-evaluation-harness.git@main", "requests", "prometheus-client"]
 )
 def lm_eval_evaluation(
     service_url: str,
@@ -97,7 +97,7 @@ def lm_eval_evaluation(
     # Get lm-eval version
     import importlib.metadata
     lm_eval_version = importlib.metadata.version("lm-eval")
-    harness_name = "lm-eval[api,ifeval,multilingual]"
+    harness_name = "lm_eval[api,ifeval,multilingual] @ git+https://github.com/neuralmagic/lm-evaluation-harness.git@main"
 
     print(f"Using {harness_name} version {lm_eval_version}")
 
