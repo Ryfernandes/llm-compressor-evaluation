@@ -4,14 +4,13 @@ from kfp import dsl
     base_image="python:3.12",
     packages_to_install=["lm-eval[api]", "requests", "prometheus-client"]
 )
-def evaluate_model(
+def lm_eval_evaluation(
     service_url: str,
-    tasks: str,
+    config_filename: str,
     session_id: str,
-    reasoning_parser: str,
     model_path: str = "Qwen/Qwen3-8B",
     artifacts_pvc_mount_path: str = "/artifacts",
-    num_concurrent: int = 128,
+    configs_pvc_mount_path: str = "/configs",
 ) -> None:
     import os
     import subprocess
@@ -21,38 +20,52 @@ def evaluate_model(
     from pathlib import Path
     from prometheus_client.parser import text_string_to_metric_families
 
-    # Configuration registry based on task name and reasoning mode
-    # Format: (task_name, reasoning_enabled): {n_shots, max_gen_toks, max_length, reps}
-    # max_length = max_gen_toks + 8192 (context buffer)
-    EVAL_CONFIG = {
-        # Non-reasoning configurations
-        ("gsm8k_platinum_cot_llama", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("mmlu_cot_llama", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("mmlu_pro_chat", False): {"n_shots": 5, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("ifeval", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("math_500", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("lcb:codegeneration_v6", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
-        ("mrcr", False): {"n_shots": 0, "max_gen_toks": 8192, "max_length": 16384, "reps": 3},
+    # Default constants for optional fields
+    DEFAULT_BASE_SEED = 1234
+    DEFAULT_TIMEOUT = 1800
 
-        # Reasoning-enabled configurations
-        ("gsm8k_platinum_cot_llama", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("mmlu_pro_chat", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("ifeval", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("math_500", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("aime25", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 8},
-        ("gpqa:diamond", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("lcb:codegeneration_v6", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-        ("mrcr", True): {"n_shots": 0, "max_gen_toks": 32000, "max_length": 40192, "reps": 3},
-    }
+    # Load configuration (already validated by validate_config component)
+    config_path = Path(configs_pvc_mount_path) / config_filename
 
-    # Default configuration if task not found
-    DEFAULT_CONFIG = {"n_shots": 5, "max_gen_toks": 4096, "max_length": 32768, "reps": 1}
+    with open(config_path, 'r') as f:
+        config = json.load(f)
 
-    # Determine if reasoning is enabled
-    reasoning_enabled = bool(reasoning_parser and reasoning_parser.strip())
+    # Extract model configuration (all required fields guaranteed by validation)
+    model_config = config["model"]
+    reasoning_parser = model_config.get("reasoning_parser", "")
+    temperature = model_config["temperature"]
+    top_p = model_config["top_p"]
+    top_k = model_config["top_k"]
+    max_model_len = model_config["max_model_len"]
 
-    # Parse and clean task list
-    task_list = [task.strip() for task in tasks.split(",") if task.strip()]
+    # Extract tasks for lm_eval harness (required fields guaranteed by validation)
+    all_tasks = config["tasks"]
+    task_list = []
+
+    for task in all_tasks:
+        if task["harness"] != "lm_eval":
+            continue
+
+        # Extract parameters with defaults for optional fields
+        task_params = {
+            "tag": task["tag"],
+            "shots": task["shots"],
+            "reps": task["reps"],
+            "concurrency": task["concurrency"],
+            "max_tokens": task["max_tokens"],
+            "base_seed": task.get("base_seed", DEFAULT_BASE_SEED),
+            "timeout": task.get("timeout", DEFAULT_TIMEOUT),
+        }
+
+        task_list.append(task_params)
+
+    if not task_list:
+        print("INFO: No lm_eval tasks found in config. Exiting.")
+        return
+
+    print(f"Found {len(task_list)} lm_eval tasks to evaluate")
+    for task in task_list:
+        print(f"  - {task['tag']}: shots={task['shots']}, reps={task['reps']}, max_tokens={task['max_tokens']}")
 
     # Setup paths
     session_dir = Path(artifacts_pvc_mount_path) / "evaluation-artifacts" / "sessions" / session_id
@@ -178,26 +191,24 @@ def evaluate_model(
         return delta
 
     try:
-        for task_tag in task_list:
+        for task_params in task_list:
+            task_tag = task_params["tag"]
+            n_shots = task_params["shots"]
+            max_gen_toks = task_params["max_tokens"]
+            reps = task_params["reps"]
+            num_concurrent = task_params["concurrency"]
+            base_seed = task_params["base_seed"]
+            timeout = task_params["timeout"]
+
             print(f"\n{'='*60}")
             print(f"Evaluating task: {task_tag}")
             print(f"{'='*60}\n")
-
-            # Get configuration for this task
-            config_key = (task_tag, reasoning_enabled)
-            config = EVAL_CONFIG.get(config_key, DEFAULT_CONFIG)
-
-            n_shots = config["n_shots"]
-            max_gen_toks = config["max_gen_toks"]
-            max_length = config["max_length"]
-            reps = config["reps"]
-
-            print(f"Configuration: n_shots={n_shots}, max_gen_toks={max_gen_toks}, max_length={max_length}, reps={reps}, reasoning_enabled={reasoning_enabled}")
+            print(f"Configuration: shots={n_shots}, max_gen_toks={max_gen_toks}, max_length={max_model_len}, reps={reps}, concurrency={num_concurrent}, timeout={timeout}")
 
             for i in range(1, reps + 1):
                 print(f"Evaluation Run {i}/{reps}")
 
-                seed = 1233 + i
+                seed = base_seed + i
 
                 # Configure proxy for this task/seed
                 set_proxy_task(task_tag, seed)
@@ -214,13 +225,13 @@ def evaluate_model(
                     "--tasks", task_tag,
                     "--model_args", (
                         f"model={model_path},"
-                        f"max_length={max_length},"
+                        f"max_length={max_model_len},"
                         f"base_url={base_url}/chat/completions,"
                         f"num_concurrent={num_concurrent},"
                         f"max_retries=3,"
                         f"tokenized_requests=False,"
                         f"tokenizer_backend=None,"
-                        f"timeout=1200"
+                        f"timeout={timeout}"
                     ),
                     "--num_fewshot", str(n_shots),
                     "--apply_chat_template",
@@ -229,9 +240,9 @@ def evaluate_model(
                     "--seed", str(seed),
                     "--gen_kwargs", (
                         f"do_sample=True,"
-                        f"temperature=0.6,"
-                        f"top_p=0.9,"
-                        f"top_k=50,"
+                        f"temperature={temperature},"
+                        f"top_p={top_p},"
+                        f"top_k={top_k},"
                         f"max_gen_toks={max_gen_toks},"
                         f"seed={seed}"
                     ),

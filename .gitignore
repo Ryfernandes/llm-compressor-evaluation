@@ -90,3 +90,9 @@ temp/
 .litellm_cache/
 
 .local-*
+
+# YAML Artifacts
+artifacts/
+
+# Claude references
+references/

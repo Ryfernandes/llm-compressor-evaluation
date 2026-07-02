@@ -1,1 +1,1 @@
-from .evaluate_model import evaluate_model
+from .lm_eval_evaluation import lm_eval_evaluation

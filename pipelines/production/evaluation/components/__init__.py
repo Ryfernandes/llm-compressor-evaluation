@@ -7,5 +7,6 @@ from .test_vllm_server import test_vllm_server
 from .test_vllm_proxy import test_vllm_proxy
 from .upload_to_github import upload_to_github
 from .validate_session_id import validate_session_id
+from .validate_config import validate_config
 
 from .evaluations import *
