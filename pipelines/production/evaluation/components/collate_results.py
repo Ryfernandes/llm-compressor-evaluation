@@ -5,7 +5,9 @@ from kfp import dsl
 def collate_results(
     session_id: str,
     model_id: str,
+    config_filename: str,
     artifacts_pvc_mount_path: str = "/artifacts",
+    configs_pvc_mount_path: str = "/configs",
 ):
     """Collate evaluation results from model evaluation runs."""
     import json
@@ -63,7 +65,7 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
-    def extract_lmeval_result(data, task_name, source_filename):
+    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, harness_metadata):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
         metrics = extract_lmeval_metrics(task_name, task_results)
@@ -77,6 +79,9 @@ def collate_results(
             except (ValueError, TypeError):
                 duration = None
 
+        # Get harness info for this task
+        task_harness_info = harness_metadata.get(task_name, {})
+
         return {
             "task_name": task_name,
             "model_name": data.get("model_name"),
@@ -85,6 +90,8 @@ def collate_results(
             "evaluation_datetime_iso": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat() if timestamp else None,
             "evaluation_duration_seconds": duration,
             "metrics": metrics,
+            "harness": task_harness_info.get("harness"),
+            "harness_version": task_harness_info.get("version"),
             "inference_parameters": {
                 "do_sample": gen_kwargs.get("do_sample"),
                 "temperature": gen_kwargs.get("temperature"),
@@ -92,10 +99,11 @@ def collate_results(
                 "top_k": gen_kwargs.get("top_k"),
                 "max_gen_toks": gen_kwargs.get("max_gen_toks"),
                 "seed": gen_kwargs.get("seed"),
+                "concurrency": task_concurrency_map.get(task_name),
             },
         }
 
-    def parse_json_files(json_files):
+    def parse_json_files(json_files, task_concurrency_map, harness_metadata):
         """Parse all JSON files and extract results."""
         all_results = []
         for json_file_path, source_dir in json_files:
@@ -112,7 +120,7 @@ def collate_results(
 
                 for task_name in json_data.get("results", {}).keys():
                     if task_name in METRICS_REGISTRY:
-                        result = extract_lmeval_result(json_data, task_name, source_filename)
+                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
                         result["source_directory"] = source_dir
                         all_results.append(result)
                     else:
@@ -325,7 +333,7 @@ def collate_results(
 
         return task_aggregates
 
-    def group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics):
+    def group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats):
         """Group results by (task_name, model_name)."""
         groups = defaultdict(list)
         for result in all_results:
@@ -350,6 +358,11 @@ def collate_results(
                 if seed is not None and (task_name, seed) in task_seed_vllm_metrics:
                     vllm_metrics = task_seed_vllm_metrics[(task_name, seed)]
 
+                # Find matching log statistics for this task/seed
+                log_stats = None
+                if seed is not None and (task_name, seed) in task_seed_log_stats:
+                    log_stats = task_seed_log_stats[(task_name, seed)]
+
                 run_data.append({
                     "source_filename": r["source_filename"],
                     "evaluation_datetime": r["evaluation_datetime"],
@@ -358,6 +371,7 @@ def collate_results(
                     "metrics": r["metrics"],
                     "proxy_statistics": proxy_stats,
                     "vllm_metrics": vllm_metrics,
+                    "log_statistics": log_stats,
                 })
 
             grouped_results.append({
@@ -370,12 +384,149 @@ def collate_results(
             })
         return grouped_results
 
+    def parse_harness_metadata(logs_path):
+        """Parse harness metadata JSON file containing harness name and version for each task."""
+        harness_metadata_path = logs_path.parent / "harness_metadata.json"
+
+        if not harness_metadata_path.exists():
+            print(f"No harness metadata found at {harness_metadata_path}")
+            return {}
+
+        try:
+            with open(harness_metadata_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"ERROR reading harness metadata: {e}")
+            return {}
+
+    def parse_vllm_log_statistics(logs_path):
+        """Parse vLLM log statistics JSON file."""
+        if not logs_path.exists():
+            print(f"No vLLM log statistics found at {logs_path}")
+            return {}, {}
+
+        try:
+            with open(logs_path, "r") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"ERROR reading vLLM log statistics: {e}")
+            return {}, {}
+
+        # Extract startup statistics
+        startup_stats = data.get("start", {})
+
+        # Parse task-level data: tasks -> task_id -> seeds -> [samples]
+        task_seed_samples = {}
+        tasks_data = data.get("tasks", {})
+
+        for task_id, task_data in tasks_data.items():
+            seeds_data = task_data.get("seeds", {})
+            for seed_str, samples in seeds_data.items():
+                seed = int(seed_str)
+                task_seed_samples[(task_id, seed)] = samples
+
+        return startup_stats, task_seed_samples
+
+    def compute_log_stats(samples):
+        """Compute min/max/mean/p95/p99 for KV cache and throughput metrics from log samples."""
+        if not samples:
+            return None
+
+        # Extract all numeric fields
+        prompt_throughput = [s["prompt_throughput"] for s in samples if "prompt_throughput" in s]
+        generation_throughput = [s["generation_throughput"] for s in samples if "generation_throughput" in s]
+        running_reqs = [s["running_reqs"] for s in samples if "running_reqs" in s]
+        waiting_reqs = [s["waiting_reqs"] for s in samples if "waiting_reqs" in s]
+        kv_cache_usage_pct = [s["kv_cache_usage_pct"] for s in samples if "kv_cache_usage_pct" in s]
+        prefix_cache_hit_rate = [s["prefix_cache_hit_rate"] for s in samples if "prefix_cache_hit_rate" in s]
+
+        def compute_percentile(values, percentile):
+            """Compute percentile using sorted values."""
+            if not values:
+                return None
+            sorted_vals = sorted(values)
+            n = len(sorted_vals)
+            k = (n - 1) * percentile / 100.0
+            f = int(k)
+            c = k - f
+            if f + 1 < n:
+                return sorted_vals[f] * (1 - c) + sorted_vals[f + 1] * c
+            return sorted_vals[f]
+
+        def stats_dict(values):
+            """Compute min/max/mean/p95/p99 for a list of values."""
+            if not values:
+                return None
+            return {
+                "min": min(values),
+                "max": max(values),
+                "mean": statistics.mean(values),
+                "p95": compute_percentile(values, 95),
+                "p99": compute_percentile(values, 99),
+            }
+
+        return {
+            "prompt_throughput": stats_dict(prompt_throughput),
+            "generation_throughput": stats_dict(generation_throughput),
+            "running_reqs": stats_dict(running_reqs),
+            "waiting_reqs": stats_dict(waiting_reqs),
+            "kv_cache_usage_pct": stats_dict(kv_cache_usage_pct),
+            "prefix_cache_hit_rate": stats_dict(prefix_cache_hit_rate),
+            "num_samples": len(samples),
+        }
+
+    def compute_task_seed_log_stats(task_seed_samples):
+        """Compute statistics for each (task, seed) combination."""
+        task_seed_stats = {}
+        for (task_id, seed), samples in task_seed_samples.items():
+            stats = compute_log_stats(samples)
+            task_seed_stats[(task_id, seed)] = stats
+        return task_seed_stats
+
+    def aggregate_log_stats_by_task(task_seed_samples):
+        """Aggregate log statistics at the task level across all seeds."""
+        # Group samples by task_id
+        samples_by_task = defaultdict(list)
+        for (task_id, seed), samples in task_seed_samples.items():
+            samples_by_task[task_id].extend(samples)
+
+        # Aggregate per task
+        task_aggregates = {}
+        for task_id, all_samples in samples_by_task.items():
+            stats = compute_log_stats(all_samples)
+
+            # Add num_seeds count
+            unique_seeds = set()
+            for (tid, seed), _ in task_seed_samples.items():
+                if tid == task_id:
+                    unique_seeds.add(seed)
+            if stats:
+                stats["num_seeds"] = len(unique_seeds)
+
+            task_aggregates[task_id] = stats
+
+        return task_aggregates
+
     # Main execution
     session_dir = Path(artifacts_pvc_mount_path) / "evaluation-artifacts" / "sessions" / session_id
     results_dir = session_dir / "results"
     logs_dir = session_dir / "logs"
     proxy_logs_path = logs_dir / "server_proxy_statistics.jsonl"
     vllm_metrics_path = logs_dir / "vllm_metrics.jsonl"
+    vllm_log_stats_path = logs_dir / "vllm_log_statistics.json"
+
+    # Load config to get task concurrency mapping
+    config_path = Path(configs_pvc_mount_path) / config_filename
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # Create task_name -> concurrency mapping
+    task_concurrency = {}
+    for task in config.get("tasks", []):
+        task_tag = task.get("tag")
+        concurrency = task.get("concurrency")
+        if task_tag and concurrency:
+            task_concurrency[task_tag] = concurrency
 
     if not results_dir.exists():
         print(f"No results directory found at {results_dir}")
@@ -402,8 +553,24 @@ def collate_results(
     task_vllm_aggregates = aggregate_vllm_metrics_by_task(task_seed_vllm_metrics)
     print(f"Aggregated vLLM metrics for {len(task_vllm_aggregates)} tasks")
 
-    all_results = parse_json_files(json_files)
-    grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics)
+    # Parse vLLM log statistics (startup + KV cache utilization)
+    startup_stats, task_seed_log_samples = parse_vllm_log_statistics(vllm_log_stats_path)
+    print(f"Parsed vLLM log statistics for {len(task_seed_log_samples)} task/seed combinations")
+
+    # Compute per-(task, seed) log statistics
+    task_seed_log_stats = compute_task_seed_log_stats(task_seed_log_samples)
+    print(f"Computed log statistics for {len(task_seed_log_stats)} task/seed combinations")
+
+    # Aggregate log statistics by task
+    task_log_aggregates = aggregate_log_stats_by_task(task_seed_log_samples)
+    print(f"Aggregated log statistics for {len(task_log_aggregates)} tasks")
+
+    # Parse harness metadata (harness name and version for each task)
+    harness_metadata = parse_harness_metadata(vllm_log_stats_path)
+    print(f"Parsed harness metadata for {len(harness_metadata)} tasks")
+
+    all_results = parse_json_files(json_files, task_concurrency, harness_metadata)
+    grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats)
 
     # Add task-level aggregates to results
     for result in grouped_results:
@@ -412,11 +579,14 @@ def collate_results(
             result["proxy_statistics_aggregate"] = task_proxy_aggregates[task_name]
         if task_name in task_vllm_aggregates:
             result["vllm_metrics_aggregate"] = task_vllm_aggregates[task_name]
+        if task_name in task_log_aggregates:
+            result["log_statistics_aggregate"] = task_log_aggregates[task_name]
 
     unique_tasks = sorted(set(r["task_name"] for r in all_results))
     unique_models = sorted(set(r["model_name"] for r in all_results if r.get("model_name")))
 
     output_data = {
+        "server": startup_stats if startup_stats else None,
         "results": grouped_results,
         "metadata": {
             "parser_version": "1.0",
@@ -429,6 +599,7 @@ def collate_results(
             "unique_models": unique_models,
             "proxy_logs_parsed": len(task_seed_proxy_stats) > 0,
             "vllm_metrics_parsed": len(task_seed_vllm_metrics) > 0,
+            "log_statistics_parsed": len(task_seed_log_stats) > 0,
         }
     }
 

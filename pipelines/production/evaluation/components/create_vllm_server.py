@@ -204,7 +204,7 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
             "containers": [
                 {
                     "name": "vllm-server",
-                    "image": "vllm/vllm-openai:v0.22.1",
+                    "image": "vllm/vllm-openai:v0.24.0",
                     "ports": [
                         {
                             "name": "http",

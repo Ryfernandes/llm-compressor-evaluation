@@ -79,6 +79,20 @@ def lm_eval_evaluation(
     # Setup vLLM metrics log file
     vllm_metrics_log = logs_dir / "vllm_metrics.jsonl"
 
+    # Setup vLLM log statistics file
+    vllm_log_stats_file = logs_dir / "vllm_log_statistics.json"
+    vllm_server_log_file = logs_dir / "vllm_server.log"
+
+    # Setup harness metadata file
+    harness_metadata_file = logs_dir / "harness_metadata.json"
+
+    # Get lm-eval version
+    import importlib.metadata
+    lm_eval_version = importlib.metadata.version("lm-eval")
+    harness_name = "lm-eval[api]"
+
+    print(f"Using {harness_name} version {lm_eval_version}")
+
     # Change to session directory
     os.chdir(session_dir)
 
@@ -190,6 +204,85 @@ def lm_eval_evaluation(
 
         return delta
 
+    def parse_kv_cache_utilization(task_id: str, seed: int):
+        """Parse KV cache utilization from vLLM server logs and update statistics file."""
+        import re
+
+        # Load existing statistics file or create new structure
+        if vllm_log_stats_file.exists():
+            with open(vllm_log_stats_file, 'r') as f:
+                stats_data = json.load(f)
+        else:
+            # Initialize with empty structure if file doesn't exist yet
+            stats_data = {
+                "last_read_line": 0,
+                "start": {},
+                "tasks": {}
+            }
+
+        # Read vLLM server log from last read position
+        if not vllm_server_log_file.exists():
+            print(f"WARNING: vLLM server log not found at {vllm_server_log_file}")
+            return
+
+        with open(vllm_server_log_file, 'r') as f:
+            all_lines = f.readlines()
+
+        last_read_line = stats_data.get("last_read_line", 0)
+        new_lines = all_lines[last_read_line:]
+
+        # Parse engine log lines for KV cache and throughput metrics
+        # Example: "INFO 07-01 20:44:04 [loggers.py:271] Engine 000: Avg prompt throughput: 2334.2 tokens/s, Avg generation throughput: 12900.7 tokens/s, Running: 511 reqs, Waiting: 0 reqs, GPU KV cache usage: 54.6%, Prefix cache hit rate: 87.5%"
+        engine_log_pattern = re.compile(
+            r'INFO\s+(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+.*?Engine \d+:\s+'
+            r'Avg prompt throughput:\s+([\d.]+)\s+tokens/s,\s+'
+            r'Avg generation throughput:\s+([\d.]+)\s+tokens/s,\s+'
+            r'Running:\s+(\d+)\s+reqs,\s+'
+            r'Waiting:\s+(\d+)\s+reqs,\s+'
+            r'GPU KV cache usage:\s+([\d.]+)%,\s+'
+            r'Prefix cache hit rate:\s+([\d.]+)%'
+        )
+
+        samples = []
+        for line in new_lines:
+            match = engine_log_pattern.search(line)
+            if match:
+                sample = {
+                    "timestamp": match.group(1),
+                    "prompt_throughput": float(match.group(2)),
+                    "generation_throughput": float(match.group(3)),
+                    "running_reqs": int(match.group(4)),
+                    "waiting_reqs": int(match.group(5)),
+                    "kv_cache_usage_pct": float(match.group(6)),
+                    "prefix_cache_hit_rate": float(match.group(7))
+                }
+                samples.append(sample)
+
+        # Update statistics structure: tasks -> task_id -> seeds -> [samples]
+        if "tasks" not in stats_data:
+            stats_data["tasks"] = {}
+
+        if task_id not in stats_data["tasks"]:
+            stats_data["tasks"][task_id] = {"seeds": {}}
+
+        seed_key = str(seed)
+        if seed_key not in stats_data["tasks"][task_id]["seeds"]:
+            stats_data["tasks"][task_id]["seeds"][seed_key] = []
+
+        # Append new samples to this seed's data
+        stats_data["tasks"][task_id]["seeds"][seed_key].extend(samples)
+
+        # Update last read line
+        stats_data["last_read_line"] = len(all_lines)
+
+        # Write updated statistics
+        with open(vllm_log_stats_file, 'w') as f:
+            json.dump(stats_data, f, indent=2)
+
+        print(f"Parsed {len(samples)} KV cache utilization samples for task={task_id}, seed={seed}")
+        if samples:
+            print(f"  KV cache usage range: {min(s['kv_cache_usage_pct'] for s in samples):.1f}% - {max(s['kv_cache_usage_pct'] for s in samples):.1f}%")
+
     try:
         for task_params in task_list:
             task_tag = task_params["tag"]
@@ -276,6 +369,25 @@ def lm_eval_evaluation(
 
                 # Disable proxy logging after evaluation completes
                 disable_proxy_logging()
+
+                # Parse KV cache utilization from vLLM server logs
+                parse_kv_cache_utilization(task_tag, seed)
+
+                # Track harness metadata for this task
+                if harness_metadata_file.exists():
+                    with open(harness_metadata_file, 'r') as f:
+                        harness_metadata = json.load(f)
+                else:
+                    harness_metadata = {}
+
+                if task_tag not in harness_metadata:
+                    harness_metadata[task_tag] = {
+                        "harness": harness_name,
+                        "version": lm_eval_version
+                    }
+
+                with open(harness_metadata_file, 'w') as f:
+                    json.dump(harness_metadata, f, indent=2)
 
                 print(f"Evaluation complete, tried moving output to {str(tmp_dir)}")
 
