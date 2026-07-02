@@ -14,10 +14,6 @@ from components import (
 
 PIPELINE_NAME = "llm-evaluation"
 
-# Evaluation constants
-EVALUATION_TASKS = "gsm8k_platinum_cot_llama"
-REASONING_PARSER = ""
-
 @dsl.pipeline(
     name=PIPELINE_NAME
 )
@@ -28,7 +24,6 @@ def pipeline(
     session_id: str,
     # Evaluation spec
     config_filename: str,
-    num_concurrent: int = 128,
     # PVC spec
     artifacts_pvc_name: str = "evaluation-pipeline-artifacts-tier-2",
     configs_pvc_name: str = "evaluation-pipeline-configs-tier-2",
@@ -107,25 +102,29 @@ def pipeline(
         test_proxy_task.set_caching_options(enable_caching=False)
 
         # Run evaluation using proxy URL (routes through proxy for logging)
-        evaluation_task = (
+        lm_evaluation_task = (
             lm_eval_evaluation(
                 service_url=create_proxy_task.output,
-                tasks=EVALUATION_TASKS,
+                config_filename=config_filename,
                 session_id=session_id,
-                reasoning_parser=REASONING_PARSER,
                 model_path=model_id,
                 artifacts_pvc_mount_path="/artifacts",
-                num_concurrent=num_concurrent
+                configs_pvc_mount_path="/configs"
             )
             .after(test_proxy_task)
             .set_accelerator_type("nvidia.com/gpu")
             .set_accelerator_limit("1")
         )
-        evaluation_task.set_caching_options(enable_caching=False)
+        lm_evaluation_task.set_caching_options(enable_caching=False)
         kubernetes.mount_pvc(
-            evaluation_task,
+            lm_evaluation_task,
             pvc_name=artifacts_pvc_name,
             mount_path="/artifacts"
+        )
+        kubernetes.mount_pvc(
+            lm_evaluation_task,
+            pvc_name=configs_pvc_name,
+            mount_path="/configs"
         )
 
         # Collate results from evaluation runs
@@ -135,7 +134,7 @@ def pipeline(
                 model_id=model_id,
                 artifacts_pvc_mount_path="/artifacts"
             )
-            .after(evaluation_task)
+            .after(lm_evaluation_task)
         )
         collate_task.set_caching_options(enable_caching=False)
         kubernetes.mount_pvc(

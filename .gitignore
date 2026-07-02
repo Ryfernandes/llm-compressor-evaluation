@@ -93,3 +93,6 @@ temp/
 
 # YAML Artifacts
 artifacts/
+
+# Claude references
+references/
