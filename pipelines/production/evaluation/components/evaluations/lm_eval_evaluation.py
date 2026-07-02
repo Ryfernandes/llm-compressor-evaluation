@@ -2,7 +2,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["lm-eval[api]", "requests", "prometheus-client"]
+    packages_to_install=["lm-eval[api,ifeval,multilingual]", "requests", "prometheus-client"]
 )
 def lm_eval_evaluation(
     service_url: str,
@@ -11,6 +11,7 @@ def lm_eval_evaluation(
     model_path: str = "Qwen/Qwen3-8B",
     artifacts_pvc_mount_path: str = "/artifacts",
     configs_pvc_mount_path: str = "/configs",
+    packages_pvc_mount_path: str = "/packages",
 ) -> None:
     import os
     import subprocess
@@ -76,6 +77,13 @@ def lm_eval_evaluation(
     tmp_dir = session_dir / "tmp"
     tmp_dir.mkdir(exist_ok=True)
 
+    # Setup shared NLTK data directory for ifeval and other tasks requiring NLTK
+    nltk_data_dir = Path(packages_pvc_mount_path) / "lm_eval_evaluation" / "nltk_data"
+    nltk_data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set NLTK_DATA environment variable to use our writable directory
+    os.environ["NLTK_DATA"] = str(nltk_data_dir)
+
     # Setup vLLM metrics log file
     vllm_metrics_log = logs_dir / "vllm_metrics.jsonl"
 
@@ -89,7 +97,7 @@ def lm_eval_evaluation(
     # Get lm-eval version
     import importlib.metadata
     lm_eval_version = importlib.metadata.version("lm-eval")
-    harness_name = "lm-eval[api]"
+    harness_name = "lm-eval[api,ifeval,multilingual]"
 
     print(f"Using {harness_name} version {lm_eval_version}")
 
@@ -342,10 +350,16 @@ def lm_eval_evaluation(
                 ]
 
                 # Run evaluation
-                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                print(result.stdout)
-                if result.stderr:
-                    print("STDERR:", result.stderr)
+                try:
+                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                    print(result.stdout)
+                    if result.stderr:
+                        print("STDERR:", result.stderr)
+                except subprocess.CalledProcessError as e:
+                    print(f"ERROR: lm_eval command failed with exit code {e.returncode}")
+                    print("STDOUT:", e.stdout)
+                    print("STDERR:", e.stderr)
+                    raise
 
                 # Collect vLLM metrics after evaluation
                 end_time_eval = time.time()
