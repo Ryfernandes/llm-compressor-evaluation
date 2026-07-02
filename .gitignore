@@ -90,3 +90,6 @@ temp/
 .litellm_cache/
 
 .local-*
+
+# YAML Artifacts
+artifacts/
