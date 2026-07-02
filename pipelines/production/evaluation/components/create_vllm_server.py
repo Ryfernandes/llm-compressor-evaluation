@@ -45,21 +45,17 @@ def create_vllm_server(
     config.load_incluster_config()
     core = client.CoreV1Api()
 
+    # Load configuration (already validated by validate_config component)
     evaluation_config_path = Path(configs_pvc_mount_path) / config_filename
-    if not evaluation_config_path.exists():
-        raise FileNotFoundError(f"Evaluation config file not found: {evaluation_config_path}")
 
-    try:
-        with open(evaluation_config_path, "r") as f:
-            evaluation_config = json.load(f)
-            model_args = evaluation_config.get("model", {})
+    with open(evaluation_config_path, "r") as f:
+        evaluation_config = json.load(f)
+        model_args = evaluation_config["model"]
 
-            reasoning_parser = model_args.get("reasoning_parser", "")
-            max_model_len = model_args.get("max_model_len", 40192)
-            tp = model_args.get("tp", 1)
-            dp = model_args.get("dp", 1)
-    except Exception as e:
-        raise RuntimeError(f"Failed to read evaluation config file: {evaluation_config_path}") from e
+        reasoning_parser = model_args.get("reasoning_parser", "")
+        max_model_len = model_args["max_model_len"]
+        tp = model_args.get("tp", 1)
+        dp = model_args.get("dp", 1)
 
     # Dry run download to estimate model size
     print(f"Running dry run to estimate size of model {model}...")

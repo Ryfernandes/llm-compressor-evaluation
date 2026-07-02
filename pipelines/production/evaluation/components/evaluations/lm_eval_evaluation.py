@@ -20,44 +20,30 @@ def lm_eval_evaluation(
     from pathlib import Path
     from prometheus_client.parser import text_string_to_metric_families
 
-    # Default constants
+    # Default constants for optional fields
     DEFAULT_BASE_SEED = 1234
     DEFAULT_TIMEOUT = 1800
 
-    # Load configuration file
+    # Load configuration (already validated by validate_config component)
     config_path = Path(configs_pvc_mount_path) / config_filename
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
 
     with open(config_path, 'r') as f:
         config = json.load(f)
 
-    # Extract model configuration
-    model_config = config.get("model", {})
+    # Extract model configuration (all required fields guaranteed by validation)
+    model_config = config["model"]
     reasoning_parser = model_config.get("reasoning_parser", "")
-    temperature = model_config.get("temperature", 0.6)
-    top_p = model_config.get("top_p", 0.9)
-    top_k = model_config.get("top_k", 50)
-    max_model_len = model_config.get("max_model_len", 16384)
+    temperature = model_config["temperature"]
+    top_p = model_config["top_p"]
+    top_k = model_config["top_k"]
+    max_model_len = model_config["max_model_len"]
 
-    # Extract and validate tasks for lm_eval harness
-    all_tasks = config.get("tasks", [])
+    # Extract tasks for lm_eval harness (required fields guaranteed by validation)
+    all_tasks = config["tasks"]
     task_list = []
 
     for task in all_tasks:
-        if task.get("harness") != "lm_eval":
-            continue
-
-        # Check required fields
-        required_fields = ["tag", "shots", "reps", "concurrency", "max_tokens"]
-        missing_fields = [field for field in required_fields if field not in task]
-
-        if missing_fields:
-            print(f"WARNING: Skipping task due to missing required fields {missing_fields}: {task}")
-            continue
-
-        if task["max_tokens"] > max_model_len:
-            print(f"WARNING: Skipping task {task['tag']} because max_tokens ({task['max_tokens']}) exceeds model's max_model_len ({max_model_len})")
+        if task["harness"] != "lm_eval":
             continue
 
         # Extract parameters with defaults for optional fields
@@ -74,7 +60,7 @@ def lm_eval_evaluation(
         task_list.append(task_params)
 
     if not task_list:
-        print("WARNING: No valid lm_eval tasks found in config. Exiting.")
+        print("INFO: No lm_eval tasks found in config. Exiting.")
         return
 
     print(f"Found {len(task_list)} lm_eval tasks to evaluate")

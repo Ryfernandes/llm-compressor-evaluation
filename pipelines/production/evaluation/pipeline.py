@@ -9,6 +9,7 @@ from components import (
     test_vllm_proxy,
     upload_to_github,
     validate_session_id,
+    validate_config,
     lm_eval_evaluation,
 )
 
@@ -41,6 +42,18 @@ def pipeline(
         mount_path="/artifacts"
     )
 
+    # Validate config file structure and required fields
+    validate_config_task = (validate_config(
+        config_filename=config_filename,
+        configs_pvc_mount_path="/configs"
+    ).after(validate_session_id_task))
+    validate_config_task.set_caching_options(enable_caching=False)
+    kubernetes.mount_pvc(
+        validate_config_task,
+        pvc_name=configs_pvc_name,
+        mount_path="/configs"
+    )
+
     # Create cleanup task that will take down any vLLM server, PVCs, and services created for this session_id
     cleanup_task = delete_vllm_server(session_id=session_id)
     cleanup_task.set_caching_options(enable_caching=False)
@@ -50,14 +63,14 @@ def pipeline(
         # Create vLLM server pod separate from the pipeline to serve the model for evaluation.
         # The task waits for the server to become ready and exposes it as a Kubernetes service
         create_vllm_task = (create_vllm_server(
-            model=model_id, 
-            session_id=session_id, 
+            model=model_id,
+            session_id=session_id,
             config_filename=config_filename,
             model_server_pvc_name=model_server_pvc_name,
             configs_pvc_mount_path="/configs",
             artifacts_pvc_name=artifacts_pvc_name,
             artifacts_pvc_mount_path="/artifacts"
-        ).after(validate_session_id_task))
+        ).after(validate_config_task))
         create_vllm_task.set_caching_options(enable_caching=False)
         kubernetes.mount_pvc(
             create_vllm_task,
