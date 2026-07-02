@@ -65,7 +65,7 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
-    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map):
+    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, harness_metadata):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
         metrics = extract_lmeval_metrics(task_name, task_results)
@@ -79,6 +79,9 @@ def collate_results(
             except (ValueError, TypeError):
                 duration = None
 
+        # Get harness info for this task
+        task_harness_info = harness_metadata.get(task_name, {})
+
         return {
             "task_name": task_name,
             "model_name": data.get("model_name"),
@@ -87,6 +90,8 @@ def collate_results(
             "evaluation_datetime_iso": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat() if timestamp else None,
             "evaluation_duration_seconds": duration,
             "metrics": metrics,
+            "harness": task_harness_info.get("harness"),
+            "harness_version": task_harness_info.get("version"),
             "inference_parameters": {
                 "do_sample": gen_kwargs.get("do_sample"),
                 "temperature": gen_kwargs.get("temperature"),
@@ -98,7 +103,7 @@ def collate_results(
             },
         }
 
-    def parse_json_files(json_files, task_concurrency_map):
+    def parse_json_files(json_files, task_concurrency_map, harness_metadata):
         """Parse all JSON files and extract results."""
         all_results = []
         for json_file_path, source_dir in json_files:
@@ -115,7 +120,7 @@ def collate_results(
 
                 for task_name in json_data.get("results", {}).keys():
                     if task_name in METRICS_REGISTRY:
-                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map)
+                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
                         result["source_directory"] = source_dir
                         all_results.append(result)
                     else:
@@ -379,6 +384,21 @@ def collate_results(
             })
         return grouped_results
 
+    def parse_harness_metadata(logs_path):
+        """Parse harness metadata JSON file containing harness name and version for each task."""
+        harness_metadata_path = logs_path.parent / "harness_metadata.json"
+
+        if not harness_metadata_path.exists():
+            print(f"No harness metadata found at {harness_metadata_path}")
+            return {}
+
+        try:
+            with open(harness_metadata_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"ERROR reading harness metadata: {e}")
+            return {}
+
     def parse_vllm_log_statistics(logs_path):
         """Parse vLLM log statistics JSON file."""
         if not logs_path.exists():
@@ -545,7 +565,11 @@ def collate_results(
     task_log_aggregates = aggregate_log_stats_by_task(task_seed_log_samples)
     print(f"Aggregated log statistics for {len(task_log_aggregates)} tasks")
 
-    all_results = parse_json_files(json_files, task_concurrency)
+    # Parse harness metadata (harness name and version for each task)
+    harness_metadata = parse_harness_metadata(vllm_log_stats_path)
+    print(f"Parsed harness metadata for {len(harness_metadata)} tasks")
+
+    all_results = parse_json_files(json_files, task_concurrency, harness_metadata)
     grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats)
 
     # Add task-level aggregates to results

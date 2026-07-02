@@ -45,6 +45,11 @@ def save_startup_statistics(
     # Define regex patterns for all statistics we need to extract
     # Each pattern maps to (regex, extractor_function, stats_keys_it_provides)
     patterns = {
+        'version': (
+            r'version ([\d.]+)',
+            lambda m: {'vllm_version': m.group(1)},
+            {'vllm_version'}
+        ),
         'model_loading': (
             r'Model loading took ([\d.]+) GiB memory and ([\d.]+) seconds',
             lambda m: {'model_size': float(m.group(1)), 'model_load_time': float(m.group(2))},
@@ -67,7 +72,7 @@ def save_startup_statistics(
         ),
     }
 
-    required_stats = {'model_size', 'kv_cache_size', 'kv_cache_tokens', 'recommended_concurrency', 'model_load_time'}
+    required_stats = {'vllm_version', 'model_size', 'kv_cache_size', 'kv_cache_tokens', 'recommended_concurrency', 'model_load_time'}
 
     # Single pass through log lines
     for line in log_lines:

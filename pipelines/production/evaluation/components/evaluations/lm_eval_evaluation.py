@@ -83,6 +83,16 @@ def lm_eval_evaluation(
     vllm_log_stats_file = logs_dir / "vllm_log_statistics.json"
     vllm_server_log_file = logs_dir / "vllm_server.log"
 
+    # Setup harness metadata file
+    harness_metadata_file = logs_dir / "harness_metadata.json"
+
+    # Get lm-eval version
+    import importlib.metadata
+    lm_eval_version = importlib.metadata.version("lm-eval")
+    harness_name = "lm-eval[api]"
+
+    print(f"Using {harness_name} version {lm_eval_version}")
+
     # Change to session directory
     os.chdir(session_dir)
 
@@ -362,6 +372,22 @@ def lm_eval_evaluation(
 
                 # Parse KV cache utilization from vLLM server logs
                 parse_kv_cache_utilization(task_tag, seed)
+
+                # Track harness metadata for this task
+                if harness_metadata_file.exists():
+                    with open(harness_metadata_file, 'r') as f:
+                        harness_metadata = json.load(f)
+                else:
+                    harness_metadata = {}
+
+                if task_tag not in harness_metadata:
+                    harness_metadata[task_tag] = {
+                        "harness": harness_name,
+                        "version": lm_eval_version
+                    }
+
+                with open(harness_metadata_file, 'w') as f:
+                    json.dump(harness_metadata, f, indent=2)
 
                 print(f"Evaluation complete, tried moving output to {str(tmp_dir)}")
 
