@@ -2,9 +2,15 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["lm_eval[api,ifeval,multilingual] @ git+https://github.com/neuralmagic/lm-evaluation-harness.git@main", "requests", "prometheus-client"]
+    packages_to_install=[
+        "lighteval[extended] @ git+https://github.com/neuralmagic/lighteval.git@eldar-fix-litellm",
+        "litellm[caching]>=1.66.0",
+        "requests",
+        "prometheus-client",
+        "pillow"
+    ]
 )
-def lm_eval_evaluation(
+def lighteval_evaluation(
     service_url: str,
     config_filename: str,
     session_id: str,
@@ -23,7 +29,7 @@ def lm_eval_evaluation(
 
     # Default constants for optional fields
     DEFAULT_BASE_SEED = 1234
-    DEFAULT_TIMEOUT = 1800
+    DEFAULT_TIMEOUT = 3600
 
     # Load configuration (already validated by validate_config component)
     config_path = Path(configs_pvc_mount_path) / config_filename
@@ -33,18 +39,17 @@ def lm_eval_evaluation(
 
     # Extract model configuration (all required fields guaranteed by validation)
     model_config = config["model"]
-    reasoning_parser = model_config.get("reasoning_parser", "")
     temperature = model_config["temperature"]
     top_p = model_config["top_p"]
     top_k = model_config["top_k"]
     max_model_len = model_config["max_model_len"]
 
-    # Extract tasks for lm_eval harness (required fields guaranteed by validation)
+    # Extract tasks for lighteval harness (required fields guaranteed by validation)
     all_tasks = config["tasks"]
     task_list = []
 
     for task in all_tasks:
-        if task["harness"] != "lm_eval":
+        if task["harness"] != "lighteval":
             continue
 
         # Extract parameters with defaults for optional fields
@@ -67,10 +72,10 @@ def lm_eval_evaluation(
         task_list.append(task_params)
 
     if not task_list:
-        print("INFO: No lm_eval tasks found in config. Exiting.")
+        print("INFO: No lighteval tasks found in config. Exiting.")
         return
 
-    print(f"Found {len(task_list)} lm_eval tasks to evaluate")
+    print(f"Found {len(task_list)} lighteval tasks to evaluate")
     for task in task_list:
         print(f"  - {task['tag']}: shots={task['shots']}, reps={task['reps']}, max_tokens={task['max_tokens']}")
 
@@ -80,11 +85,11 @@ def lm_eval_evaluation(
     results_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = session_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = session_dir / "tmp_lm_eval"
+    tmp_dir = session_dir / "tmp_lighteval"
     tmp_dir.mkdir(exist_ok=True)
 
-    # Setup shared NLTK data directory for ifeval and other tasks requiring NLTK
-    nltk_data_dir = Path(packages_pvc_mount_path) / "lm_eval_evaluation" / "nltk_data"
+    # Setup shared NLTK data directory for tasks requiring NLTK (ifeval, ifbench, math tasks)
+    nltk_data_dir = Path(packages_pvc_mount_path) / "lighteval_evaluation" / "nltk_data"
     nltk_data_dir.mkdir(parents=True, exist_ok=True)
 
     # Set NLTK_DATA environment variable to use our writable directory
@@ -100,12 +105,12 @@ def lm_eval_evaluation(
     # Setup harness metadata file
     harness_metadata_file = logs_dir / "harness_metadata.json"
 
-    # Get lm-eval version
+    # Get lighteval version
     import importlib.metadata
-    lm_eval_version = importlib.metadata.version("lm-eval")
-    harness_name = "lm_eval[api,ifeval,multilingual] @ git+https://github.com/neuralmagic/lm-evaluation-harness.git@main"
+    lighteval_version = importlib.metadata.version("lighteval")
+    harness_name = "lighteval[extended] @ git+https://github.com/neuralmagic/lighteval.git@eldar-fix-litellm"
 
-    print(f"Using {harness_name} version {lm_eval_version}")
+    print(f"Using {harness_name} version {lighteval_version}")
 
     # Change to session directory
     os.chdir(session_dir)
@@ -319,6 +324,7 @@ def lm_eval_evaluation(
                 seed = base_seed + i
 
                 # Configure proxy for this task/seed
+                # Note: LightEval task IDs include |0 suffix, but we use the base tag for tracking
                 set_proxy_task(task_tag, seed)
                 enable_proxy_logging()
 
@@ -326,39 +332,33 @@ def lm_eval_evaluation(
                 start_metrics = get_vllm_metrics()
                 start_time_eval = time.time()
 
-                # Build lm_eval command
+                # Build lighteval command
+                # Format: lighteval endpoint litellm "model_name=...,provider=...,base_url=...,..." "task@k=1@n=1|0" --output-dir results/... --save-details
+                model_args = (
+                    f"model_name=hosted_vllm/{model_path},"
+                    f"provider=hosted_vllm,"
+                    f"base_url={base_url},"
+                    f"timeout={timeout},"
+                    f"concurrent_requests={num_concurrent},"
+                    f"generation_parameters={{temperature:{temperature},max_new_tokens:{max_gen_toks},top_p:{top_p},seed:{seed},top_k:{top_k}}}"
+                )
+
+                # LightEval task format: task_tag@k=1@n=1|0
+                # The |0 suffix indicates the first (and usually only) variant
+                task_spec = f"{task_tag}@k=1@n=1|0"
+
                 cmd = [
-                    "python", "-m", "lm_eval",
-                    "--model", "local-chat-completions",
-                    "--tasks", task_tag,
-                    "--model_args", (
-                        f"model={model_path},"
-                        f"max_length={max_model_len},"
-                        f"base_url={base_url}/chat/completions,"
-                        f"num_concurrent={num_concurrent},"
-                        f"max_retries=3,"
-                        f"tokenized_requests=False,"
-                        f"tokenizer_backend=None,"
-                        f"timeout={timeout}"
-                    ),
-                    "--num_fewshot", str(n_shots),
-                    "--apply_chat_template",
-                    "--fewshot_as_multiturn",
-                    "--output_path", str(tmp_dir),
-                    "--seed", str(seed),
-                    "--gen_kwargs", (
-                        f"do_sample=True,"
-                        f"temperature={temperature},"
-                        f"top_p={top_p},"
-                        f"top_k={top_k},"
-                        f"max_gen_toks={max_gen_toks},"
-                        f"seed={seed}"
-                    ),
+                    "python", "-m", "lighteval", "endpoint", "litellm",
+                    model_args,
+                    task_spec,
+                    "--remove-reasoning-tags",
+                    "--output-dir", str(tmp_dir),
+                    "--save-details",
                 ]
 
-                # Add --limit argument if limit is set
+                # Add --max-samples argument if limit is set
                 if limit is not None:
-                    cmd.extend(["--limit", str(limit)])
+                    cmd.extend(["--max-samples", str(limit)])
 
                 # Run evaluation
                 try:
@@ -367,7 +367,7 @@ def lm_eval_evaluation(
                     if result.stderr:
                         print("STDERR:", result.stderr)
                 except subprocess.CalledProcessError as e:
-                    print(f"ERROR: lm_eval command failed with exit code {e.returncode}")
+                    print(f"ERROR: lighteval command failed with exit code {e.returncode}")
                     print("STDOUT:", e.stdout)
                     print("STDERR:", e.stderr)
                     raise
@@ -408,7 +408,7 @@ def lm_eval_evaluation(
                 if task_tag not in harness_metadata:
                     harness_metadata[task_tag] = {
                         "harness": harness_name,
-                        "version": lm_eval_version
+                        "version": lighteval_version
                     }
 
                 with open(harness_metadata_file, 'w') as f:
@@ -416,12 +416,26 @@ def lm_eval_evaluation(
 
                 print(f"Evaluation complete, tried moving output to {str(tmp_dir)}")
 
+                # Search for any JSON files in tmp directory
                 json_files = list(tmp_dir.rglob("*.json"))
 
                 if json_files:
                     # Use the first (or only) results file found
                     json_file = json_files[0]
-                    output_name = f"{task_tag}_seed_{seed}.json"
+
+                    # Extract timestamp from lighteval's output filename (e.g., results_2026-07-06T08-03-46.941709.json)
+                    # and use it in our output filename to preserve it for collation
+                    original_name = json_file.name
+                    import re
+                    timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)', original_name)
+
+                    if timestamp_match:
+                        timestamp = timestamp_match.group(1)
+                        output_name = f"{task_tag}_seed_{seed}_{timestamp}.json"
+                    else:
+                        # Fallback if no timestamp found (shouldn't happen with lighteval)
+                        output_name = f"{task_tag}_seed_{seed}.json"
+
                     output_path = results_dir / output_name
 
                     # Copy instead of rename to avoid cross-device link errors

@@ -51,6 +51,16 @@ def collate_results(
             return "lmeval"
         return None
 
+    def get_base_task_tag(task_id):
+        """
+        Extract base task tag from lighteval task ID.
+        LightEval adds |N suffix to task IDs (e.g., 'math_500|0'),
+        but logging uses the base tag ('math_500').
+        """
+        if "|" in task_id:
+            return task_id.split("|")[0]
+        return task_id
+
     def extract_lmeval_metrics(task_name, task_results):
         """Extract metrics from LM-Eval format."""
         metrics = {}
@@ -65,7 +75,44 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
-    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, harness_metadata):
+    def parse_timestamp_from_filename(filename):
+        """
+        Extract ISO timestamp from filename if present.
+        Both lm-eval and lighteval include ISO timestamps in filenames.
+        Example: results_2026-07-06T08-03-46.941709.json
+        Returns UNIX timestamp or None if parsing fails.
+        """
+        import re
+        # Pattern: YYYY-MM-DDTHH-MM-SS.microseconds
+        pattern = r'(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)'
+        match = re.search(pattern, filename)
+        if match:
+            extracted = match.group(1)
+            # Convert from: 2026-07-06T08-03-46.941709
+            # To ISO format: 2026-07-06T08:03:46.941709
+            iso_string = extracted[:10] + 'T' + extracted[11:13] + ':' + extracted[14:16] + ':' + extracted[17:]
+            try:
+                dt = datetime.fromisoformat(iso_string).replace(tzinfo=timezone.utc)
+                return dt.timestamp()
+            except (ValueError, AttributeError):
+                pass
+        return None
+
+    def extract_lighteval_metrics(task_name, task_results):
+        """Extract metrics from LightEval format."""
+        metrics = {}
+        if task_name in METRICS_REGISTRY:
+            for metric_key in METRICS_REGISTRY[task_name]:
+                value = task_results.get(metric_key)
+                stderr_key = f"{metric_key}_stderr"
+                stderr = task_results.get(stderr_key)
+                if stderr == "N/A":
+                    stderr = None
+                if value is not None:
+                    metrics[metric_key] = {"value": value, "stderr": stderr}
+        return metrics
+
+    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
         metrics = extract_lmeval_metrics(task_name, task_results)
@@ -100,10 +147,61 @@ def collate_results(
                 "max_gen_toks": gen_kwargs.get("max_gen_toks"),
                 "seed": gen_kwargs.get("seed"),
                 "concurrency": task_concurrency_map.get(task_name),
+                "limit": task_limit_map.get(task_name),
             },
         }
 
-    def parse_json_files(json_files, task_concurrency_map, harness_metadata):
+    def extract_lighteval_result(data, task_id, source_filename, task_concurrency_map, task_limit_map, harness_metadata):
+        """Extract single task result from LightEval."""
+        task_results = data["results"][task_id]
+        metrics = extract_lighteval_metrics(task_id, task_results)
+
+        config_general = data.get("config_general", {})
+        gen_params = config_general.get("model_config", {}).get("generation_parameters", {})
+
+        # LightEval's start_time is monotonic (system uptime), not UNIX epoch
+        # Parse timestamp from filename instead (both frameworks include ISO timestamp in filename)
+        timestamp = parse_timestamp_from_filename(source_filename)
+
+        duration = config_general.get("total_evaluation_time_secondes")  # Note: typo in lighteval
+        if isinstance(duration, str):
+            try:
+                duration = float(duration)
+            except (ValueError, TypeError):
+                duration = None
+
+        # LightEval task IDs have |N suffix (e.g., 'math_500|0'),
+        # but logging/config uses base tag (e.g., 'math_500')
+        base_task_tag = get_base_task_tag(task_id)
+
+        # Get harness info for this task (using base tag)
+        task_harness_info = harness_metadata.get(base_task_tag, {})
+
+        temperature = gen_params.get("temperature", 0)
+
+        return {
+            "task_name": task_id,
+            "model_name": config_general.get("model_name"),
+            "source_filename": source_filename,
+            "evaluation_datetime": timestamp,
+            "evaluation_datetime_iso": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat() if timestamp else None,
+            "evaluation_duration_seconds": duration,
+            "metrics": metrics,
+            "harness": task_harness_info.get("harness"),
+            "harness_version": task_harness_info.get("version"),
+            "inference_parameters": {
+                "do_sample": temperature is not None and temperature > 0,  # Inferred
+                "temperature": temperature,
+                "top_p": gen_params.get("top_p"),
+                "top_k": gen_params.get("top_k"),
+                "max_gen_toks": gen_params.get("max_new_tokens"),  # Different name
+                "seed": gen_params.get("seed"),
+                "concurrency": task_concurrency_map.get(base_task_tag),  # Use base tag for lookups
+                "limit": task_limit_map.get(base_task_tag),  # Use base tag for lookups
+            },
+        }
+
+    def parse_json_files(json_files, task_concurrency_map, task_limit_map, harness_metadata):
         """Parse all JSON files and extract results."""
         all_results = []
         for json_file_path, source_dir in json_files:
@@ -112,19 +210,30 @@ def collate_results(
                     json_data = json.load(f)
 
                 framework = detect_framework(json_data)
-                if framework != "lmeval":
-                    print(f"Skipping non-LM-Eval file: {json_file_path}")
+                if framework is None:
+                    print(f"Skipping unknown framework file: {json_file_path}")
                     continue
 
                 source_filename = os.path.basename(json_file_path)
 
-                for task_name in json_data.get("results", {}).keys():
-                    if task_name in METRICS_REGISTRY:
-                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
-                        result["source_directory"] = source_dir
-                        all_results.append(result)
-                    else:
-                        print(f"Skipping unknown task '{task_name}' in {json_file_path}")
+                if framework == "lmeval":
+                    for task_name in json_data.get("results", {}).keys():
+                        if task_name in METRICS_REGISTRY:
+                            result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
+                            result["source_directory"] = source_dir
+                            all_results.append(result)
+                        else:
+                            print(f"Skipping unknown task '{task_name}' in {json_file_path}")
+                elif framework == "lighteval":
+                    for task_id in json_data.get("results", {}).keys():
+                        if task_id == "all":
+                            continue
+                        if task_id in METRICS_REGISTRY:
+                            result = extract_lighteval_result(json_data, task_id, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
+                            result["source_directory"] = source_dir
+                            all_results.append(result)
+                        else:
+                            print(f"Skipping unknown task '{task_id}' in {json_file_path}")
             except Exception as e:
                 print(f"ERROR parsing {json_file_path}: {e}")
         return all_results
@@ -348,20 +457,24 @@ def collate_results(
                 # Extract seed from inference_parameters
                 seed = r["inference_parameters"].get("seed")
 
+                # For lighteval tasks, strip |N suffix to match logged task_id
+                # Logging uses base tag (e.g., 'math_500'), but JSON has full ID (e.g., 'math_500|0')
+                lookup_task_name = get_base_task_tag(task_name)
+
                 # Find matching proxy stats for this task/seed
                 proxy_stats = None
-                if seed is not None and (task_name, seed) in task_seed_proxy_stats:
-                    proxy_stats = task_seed_proxy_stats[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_proxy_stats:
+                    proxy_stats = task_seed_proxy_stats[(lookup_task_name, seed)]
 
                 # Find matching vLLM metrics for this task/seed
                 vllm_metrics = None
-                if seed is not None and (task_name, seed) in task_seed_vllm_metrics:
-                    vllm_metrics = task_seed_vllm_metrics[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_vllm_metrics:
+                    vllm_metrics = task_seed_vllm_metrics[(lookup_task_name, seed)]
 
                 # Find matching log statistics for this task/seed
                 log_stats = None
-                if seed is not None and (task_name, seed) in task_seed_log_stats:
-                    log_stats = task_seed_log_stats[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_log_stats:
+                    log_stats = task_seed_log_stats[(lookup_task_name, seed)]
 
                 run_data.append({
                     "source_filename": r["source_filename"],
@@ -522,13 +635,23 @@ def collate_results(
     with open(config_path, 'r') as f:
         config = json.load(f)
 
-    # Create task_name -> concurrency mapping
+    # Create task_name -> concurrency and limit mappings
     task_concurrency = {}
+    task_limit = {}
     for task in config.get("tasks", []):
         task_tag = task.get("tag")
         concurrency = task.get("concurrency")
+        limit = task.get("limit")
+
         if task_tag and concurrency:
             task_concurrency[task_tag] = concurrency
+
+        if task_tag:
+            # limit: if 0 or not present, set to None
+            if limit == 0 or limit is None:
+                task_limit[task_tag] = None
+            else:
+                task_limit[task_tag] = limit
 
     if not results_dir.exists():
         print(f"No results directory found at {results_dir}")
@@ -571,18 +694,21 @@ def collate_results(
     harness_metadata = parse_harness_metadata(vllm_log_stats_path)
     print(f"Parsed harness metadata for {len(harness_metadata)} tasks")
 
-    all_results = parse_json_files(json_files, task_concurrency, harness_metadata)
+    all_results = parse_json_files(json_files, task_concurrency, task_limit, harness_metadata)
     grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats)
 
     # Add task-level aggregates to results
     for result in grouped_results:
         task_name = result["task_name"]
-        if task_name in task_proxy_aggregates:
-            result["proxy_statistics_aggregate"] = task_proxy_aggregates[task_name]
-        if task_name in task_vllm_aggregates:
-            result["vllm_metrics_aggregate"] = task_vllm_aggregates[task_name]
-        if task_name in task_log_aggregates:
-            result["log_statistics_aggregate"] = task_log_aggregates[task_name]
+        # For lighteval tasks, strip |N suffix to match logged task_id
+        lookup_task_name = get_base_task_tag(task_name)
+
+        if lookup_task_name in task_proxy_aggregates:
+            result["proxy_statistics_aggregate"] = task_proxy_aggregates[lookup_task_name]
+        if lookup_task_name in task_vllm_aggregates:
+            result["vllm_metrics_aggregate"] = task_vllm_aggregates[lookup_task_name]
+        if lookup_task_name in task_log_aggregates:
+            result["log_statistics_aggregate"] = task_log_aggregates[lookup_task_name]
 
     unique_tasks = sorted(set(r["task_name"] for r in all_results))
     unique_models = sorted(set(r["model_name"] for r in all_results if r.get("model_name")))
