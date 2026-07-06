@@ -48,6 +48,11 @@ def lm_eval_evaluation(
             continue
 
         # Extract parameters with defaults for optional fields
+        # limit: if 0 or not present, set to None (no limit)
+        limit = task.get("limit")
+        if limit == 0:
+            limit = None
+
         task_params = {
             "tag": task["tag"],
             "shots": task["shots"],
@@ -56,6 +61,7 @@ def lm_eval_evaluation(
             "max_tokens": task["max_tokens"],
             "base_seed": task.get("base_seed", DEFAULT_BASE_SEED),
             "timeout": task.get("timeout", DEFAULT_TIMEOUT),
+            "limit": limit,
         }
 
         task_list.append(task_params)
@@ -300,11 +306,12 @@ def lm_eval_evaluation(
             num_concurrent = task_params["concurrency"]
             base_seed = task_params["base_seed"]
             timeout = task_params["timeout"]
+            limit = task_params["limit"]
 
             print(f"\n{'='*60}")
             print(f"Evaluating task: {task_tag}")
             print(f"{'='*60}\n")
-            print(f"Configuration: shots={n_shots}, max_gen_toks={max_gen_toks}, max_length={max_model_len}, reps={reps}, concurrency={num_concurrent}, timeout={timeout}")
+            print(f"Configuration: shots={n_shots}, max_gen_toks={max_gen_toks}, max_length={max_model_len}, reps={reps}, concurrency={num_concurrent}, timeout={timeout}, limit={limit}")
 
             for i in range(1, reps + 1):
                 print(f"Evaluation Run {i}/{reps}")
@@ -337,7 +344,7 @@ def lm_eval_evaluation(
                     "--num_fewshot", str(n_shots),
                     "--apply_chat_template",
                     "--fewshot_as_multiturn",
-                    "--path", str(tmp_dir),
+                    "--output_path", str(tmp_dir),
                     "--seed", str(seed),
                     "--gen_kwargs", (
                         f"do_sample=True,"
@@ -348,6 +355,10 @@ def lm_eval_evaluation(
                         f"seed={seed}"
                     ),
                 ]
+
+                # Add --limit argument if limit is set
+                if limit is not None:
+                    cmd.extend(["--limit", str(limit)])
 
                 # Run evaluation
                 try:

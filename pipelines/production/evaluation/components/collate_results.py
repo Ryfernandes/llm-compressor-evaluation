@@ -102,7 +102,7 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
-    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, harness_metadata):
+    def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
         metrics = extract_lmeval_metrics(task_name, task_results)
@@ -137,10 +137,11 @@ def collate_results(
                 "max_gen_toks": gen_kwargs.get("max_gen_toks"),
                 "seed": gen_kwargs.get("seed"),
                 "concurrency": task_concurrency_map.get(task_name),
+                "limit": task_limit_map.get(task_name),
             },
         }
 
-    def extract_lighteval_result(data, task_id, source_filename, task_concurrency_map, harness_metadata):
+    def extract_lighteval_result(data, task_id, source_filename, task_concurrency_map, task_limit_map, harness_metadata):
         """Extract single task result from LightEval."""
         task_results = data["results"][task_id]
         metrics = extract_lighteval_metrics(task_id, task_results)
@@ -182,10 +183,11 @@ def collate_results(
                 "max_gen_toks": gen_params.get("max_new_tokens"),  # Different name
                 "seed": gen_params.get("seed"),
                 "concurrency": task_concurrency_map.get(task_id),
+                "limit": task_limit_map.get(task_id),
             },
         }
 
-    def parse_json_files(json_files, task_concurrency_map, harness_metadata):
+    def parse_json_files(json_files, task_concurrency_map, task_limit_map, harness_metadata):
         """Parse all JSON files and extract results."""
         all_results = []
         for json_file_path, source_dir in json_files:
@@ -203,7 +205,7 @@ def collate_results(
                 if framework == "lmeval":
                     for task_name in json_data.get("results", {}).keys():
                         if task_name in METRICS_REGISTRY:
-                            result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
+                            result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
                             result["source_directory"] = source_dir
                             all_results.append(result)
                         else:
@@ -213,7 +215,7 @@ def collate_results(
                         if task_id == "all":
                             continue
                         if task_id in METRICS_REGISTRY:
-                            result = extract_lighteval_result(json_data, task_id, source_filename, task_concurrency_map, harness_metadata)
+                            result = extract_lighteval_result(json_data, task_id, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
                             result["source_directory"] = source_dir
                             all_results.append(result)
                         else:
@@ -615,13 +617,23 @@ def collate_results(
     with open(config_path, 'r') as f:
         config = json.load(f)
 
-    # Create task_name -> concurrency mapping
+    # Create task_name -> concurrency and limit mappings
     task_concurrency = {}
+    task_limit = {}
     for task in config.get("tasks", []):
         task_tag = task.get("tag")
         concurrency = task.get("concurrency")
+        limit = task.get("limit")
+
         if task_tag and concurrency:
             task_concurrency[task_tag] = concurrency
+
+        if task_tag:
+            # limit: if 0 or not present, set to None
+            if limit == 0 or limit is None:
+                task_limit[task_tag] = None
+            else:
+                task_limit[task_tag] = limit
 
     if not results_dir.exists():
         print(f"No results directory found at {results_dir}")
@@ -664,7 +676,7 @@ def collate_results(
     harness_metadata = parse_harness_metadata(vllm_log_stats_path)
     print(f"Parsed harness metadata for {len(harness_metadata)} tasks")
 
-    all_results = parse_json_files(json_files, task_concurrency, harness_metadata)
+    all_results = parse_json_files(json_files, task_concurrency, task_limit, harness_metadata)
     grouped_results = group_results(all_results, task_seed_proxy_stats, task_seed_vllm_metrics, task_seed_log_stats)
 
     # Add task-level aggregates to results
