@@ -11,6 +11,7 @@ from components import (
     validate_session_id,
     validate_config,
     lm_eval_evaluation,
+    lighteval_evaluation,
     save_startup_statistics,
 )
 
@@ -169,8 +170,50 @@ def pipeline(
             pvc_name=packages_pvc_name,
             mount_path="/packages"
         )
+        kubernetes.use_secret_as_env(
+            lm_evaluation_task,
+            secret_name="ryan-test-hf-hub-secret",
+            secret_key_to_env={"HF_TOKEN": "HF_TOKEN"}
+        )
 
-        # Collate results from evaluation runs
+        # Run lighteval evaluation using proxy URL (routes through proxy for logging)
+        lighteval_evaluation_task = (
+            lighteval_evaluation(
+                service_url=create_proxy_task.output,
+                config_filename=config_filename,
+                session_id=session_id,
+                model_path=model_id,
+                artifacts_pvc_mount_path="/artifacts",
+                configs_pvc_mount_path="/configs",
+                packages_pvc_mount_path="/packages"
+            )
+            .after(lm_evaluation_task)
+            .set_accelerator_type("nvidia.com/gpu")
+            .set_accelerator_limit("1")
+        )
+        lighteval_evaluation_task.set_caching_options(enable_caching=False)
+        kubernetes.mount_pvc(
+            lighteval_evaluation_task,
+            pvc_name=artifacts_pvc_name,
+            mount_path="/artifacts"
+        )
+        kubernetes.mount_pvc(
+            lighteval_evaluation_task,
+            pvc_name=configs_pvc_name,
+            mount_path="/configs"
+        )
+        kubernetes.mount_pvc(
+            lighteval_evaluation_task,
+            pvc_name=packages_pvc_name,
+            mount_path="/packages"
+        )
+        kubernetes.use_secret_as_env(
+            lighteval_evaluation_task,
+            secret_name="ryan-test-hf-hub-secret",
+            secret_key_to_env={"HF_TOKEN": "HF_TOKEN"}
+        )
+
+        # Collate results from evaluation runs (both lm_eval and lighteval)
         collate_task = (
             collate_results(
                 session_id=session_id,
@@ -179,7 +222,7 @@ def pipeline(
                 artifacts_pvc_mount_path="/artifacts",
                 configs_pvc_mount_path="/configs"
             )
-            .after(lm_evaluation_task)
+            .after(lighteval_evaluation_task)
         )
         collate_task.set_caching_options(enable_caching=False)
         kubernetes.mount_pvc(
