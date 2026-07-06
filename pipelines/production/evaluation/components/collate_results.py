@@ -17,18 +17,24 @@ def collate_results(
     from datetime import datetime, timezone
     from pathlib import Path
 
-    # Metrics registry
-    METRICS_REGISTRY = {
+    # Metrics registries split by framework
+    # LM-Eval: exact key matching
+    LMEVAL_METRICS = {
         "gsm8k": ["exact_match,strict-match"],
         "gsm8k_platinum_cot_llama": ["exact_match,strict-match"],
         "mmlu_cot_llama": ["exact_match,strict_match"],
         "mmlu_pro_chat": ["exact_match,custom-extract"],
         "ifeval": ["inst_level_strict_acc,none"],
-        "math_500|0": ["pass@k:k=1&n=1"],
-        "aime25|0": ["pass@k:k=1&n=1"],
-        "gpqa:diamond|0": ["gpqa_pass@k:k=1&n=1"],
-        "lcb:codegeneration_v6": ["codegen_pass@k:k=1&n=1"],
         "mrcr": ["score_gt_16k_le_32k", "AUC"],
+    }
+
+    # LightEval: prefix matching (part before @ symbol)
+    # The suffix after @ varies based on evaluation settings
+    LIGHTEVAL_METRICS = {
+        "math_500|0": ["pass@"],
+        "aime25|0": ["pass@"],
+        "gpqa:diamond|0": ["gpqa_pass@"],
+        "lcb:codegeneration_v6|0": ["codegen_pass@"],
     }
 
     def scan_json_files(directories):
@@ -62,10 +68,10 @@ def collate_results(
         return task_id
 
     def extract_lmeval_metrics(task_name, task_results):
-        """Extract metrics from LM-Eval format."""
+        """Extract metrics from LM-Eval format using exact key matching."""
         metrics = {}
-        if task_name in METRICS_REGISTRY:
-            for metric_key in METRICS_REGISTRY[task_name]:
+        if task_name in LMEVAL_METRICS:
+            for metric_key in LMEVAL_METRICS[task_name]:
                 value = task_results.get(metric_key)
                 stderr_key = f"{metric_key}_stderr"
                 stderr = task_results.get(stderr_key)
@@ -99,17 +105,24 @@ def collate_results(
         return None
 
     def extract_lighteval_metrics(task_name, task_results):
-        """Extract metrics from LightEval format."""
+        """Extract metrics from LightEval format using prefix matching.
+
+        LightEval metric keys have dynamic suffixes after @ (e.g., 'pass@1:16', 'codegen_pass@1:16')
+        that depend on evaluation settings. We match based on the prefix before @.
+        """
         metrics = {}
-        if task_name in METRICS_REGISTRY:
-            for metric_key in METRICS_REGISTRY[task_name]:
-                value = task_results.get(metric_key)
-                stderr_key = f"{metric_key}_stderr"
-                stderr = task_results.get(stderr_key)
-                if stderr == "N/A":
-                    stderr = None
-                if value is not None:
-                    metrics[metric_key] = {"value": value, "stderr": stderr}
+        if task_name in LIGHTEVAL_METRICS:
+            for metric_prefix in LIGHTEVAL_METRICS[task_name]:
+                # Find all keys that start with this prefix and don't end with _stderr
+                for key in task_results.keys():
+                    if key.startswith(metric_prefix) and not key.endswith("_stderr"):
+                        value = task_results.get(key)
+                        stderr_key = f"{key}_stderr"
+                        stderr = task_results.get(stderr_key)
+                        if stderr == "N/A":
+                            stderr = None
+                        if value is not None:
+                            metrics[key] = {"value": value, "stderr": stderr}
         return metrics
 
     def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata):
@@ -218,7 +231,7 @@ def collate_results(
 
                 if framework == "lmeval":
                     for task_name in json_data.get("results", {}).keys():
-                        if task_name in METRICS_REGISTRY:
+                        if task_name in LMEVAL_METRICS:
                             result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
                             result["source_directory"] = source_dir
                             all_results.append(result)
@@ -228,7 +241,7 @@ def collate_results(
                     for task_id in json_data.get("results", {}).keys():
                         if task_id == "all":
                             continue
-                        if task_id in METRICS_REGISTRY:
+                        if task_id in LIGHTEVAL_METRICS:
                             result = extract_lighteval_result(json_data, task_id, source_filename, task_concurrency_map, task_limit_map, harness_metadata)
                             result["source_directory"] = source_dir
                             all_results.append(result)
