@@ -51,6 +51,16 @@ def collate_results(
             return "lmeval"
         return None
 
+    def get_base_task_tag(task_id):
+        """
+        Extract base task tag from lighteval task ID.
+        LightEval adds |N suffix to task IDs (e.g., 'math_500|0'),
+        but logging uses the base tag ('math_500').
+        """
+        if "|" in task_id:
+            return task_id.split("|")[0]
+        return task_id
+
     def extract_lmeval_metrics(task_name, task_results):
         """Extract metrics from LM-Eval format."""
         metrics = {}
@@ -160,8 +170,12 @@ def collate_results(
             except (ValueError, TypeError):
                 duration = None
 
-        # Get harness info for this task
-        task_harness_info = harness_metadata.get(task_id, {})
+        # LightEval task IDs have |N suffix (e.g., 'math_500|0'),
+        # but logging/config uses base tag (e.g., 'math_500')
+        base_task_tag = get_base_task_tag(task_id)
+
+        # Get harness info for this task (using base tag)
+        task_harness_info = harness_metadata.get(base_task_tag, {})
 
         temperature = gen_params.get("temperature", 0)
 
@@ -182,8 +196,8 @@ def collate_results(
                 "top_k": gen_params.get("top_k"),
                 "max_gen_toks": gen_params.get("max_new_tokens"),  # Different name
                 "seed": gen_params.get("seed"),
-                "concurrency": task_concurrency_map.get(task_id),
-                "limit": task_limit_map.get(task_id),
+                "concurrency": task_concurrency_map.get(base_task_tag),  # Use base tag for lookups
+                "limit": task_limit_map.get(base_task_tag),  # Use base tag for lookups
             },
         }
 
@@ -443,20 +457,24 @@ def collate_results(
                 # Extract seed from inference_parameters
                 seed = r["inference_parameters"].get("seed")
 
+                # For lighteval tasks, strip |N suffix to match logged task_id
+                # Logging uses base tag (e.g., 'math_500'), but JSON has full ID (e.g., 'math_500|0')
+                lookup_task_name = get_base_task_tag(task_name)
+
                 # Find matching proxy stats for this task/seed
                 proxy_stats = None
-                if seed is not None and (task_name, seed) in task_seed_proxy_stats:
-                    proxy_stats = task_seed_proxy_stats[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_proxy_stats:
+                    proxy_stats = task_seed_proxy_stats[(lookup_task_name, seed)]
 
                 # Find matching vLLM metrics for this task/seed
                 vllm_metrics = None
-                if seed is not None and (task_name, seed) in task_seed_vllm_metrics:
-                    vllm_metrics = task_seed_vllm_metrics[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_vllm_metrics:
+                    vllm_metrics = task_seed_vllm_metrics[(lookup_task_name, seed)]
 
                 # Find matching log statistics for this task/seed
                 log_stats = None
-                if seed is not None and (task_name, seed) in task_seed_log_stats:
-                    log_stats = task_seed_log_stats[(task_name, seed)]
+                if seed is not None and (lookup_task_name, seed) in task_seed_log_stats:
+                    log_stats = task_seed_log_stats[(lookup_task_name, seed)]
 
                 run_data.append({
                     "source_filename": r["source_filename"],
@@ -682,12 +700,15 @@ def collate_results(
     # Add task-level aggregates to results
     for result in grouped_results:
         task_name = result["task_name"]
-        if task_name in task_proxy_aggregates:
-            result["proxy_statistics_aggregate"] = task_proxy_aggregates[task_name]
-        if task_name in task_vllm_aggregates:
-            result["vllm_metrics_aggregate"] = task_vllm_aggregates[task_name]
-        if task_name in task_log_aggregates:
-            result["log_statistics_aggregate"] = task_log_aggregates[task_name]
+        # For lighteval tasks, strip |N suffix to match logged task_id
+        lookup_task_name = get_base_task_tag(task_name)
+
+        if lookup_task_name in task_proxy_aggregates:
+            result["proxy_statistics_aggregate"] = task_proxy_aggregates[lookup_task_name]
+        if lookup_task_name in task_vllm_aggregates:
+            result["vllm_metrics_aggregate"] = task_vllm_aggregates[lookup_task_name]
+        if lookup_task_name in task_log_aggregates:
+            result["log_statistics_aggregate"] = task_log_aggregates[lookup_task_name]
 
     unique_tasks = sorted(set(r["task_name"] for r in all_results))
     unique_models = sorted(set(r["model_name"] for r in all_results if r.get("model_name")))

@@ -2,7 +2,13 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["lighteval[extended] @ git+https://github.com/neuralmagic/lighteval.git@eldar-fix-litellm", "requests", "prometheus-client"]
+    packages_to_install=[
+        "lighteval[extended] @ git+https://github.com/neuralmagic/lighteval.git@eldar-fix-litellm",
+        "litellm[caching]>=1.66.0",
+        "requests",
+        "prometheus-client",
+        "pillow"
+    ]
 )
 def lighteval_evaluation(
     service_url: str,
@@ -81,6 +87,13 @@ def lighteval_evaluation(
     logs_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir = session_dir / "tmp_lighteval"
     tmp_dir.mkdir(exist_ok=True)
+
+    # Setup shared NLTK data directory for tasks requiring NLTK (ifeval, ifbench, math tasks)
+    nltk_data_dir = Path(packages_pvc_mount_path) / "lighteval_evaluation" / "nltk_data"
+    nltk_data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set NLTK_DATA environment variable to use our writable directory
+    os.environ["NLTK_DATA"] = str(nltk_data_dir)
 
     # Setup vLLM metrics log file
     vllm_metrics_log = logs_dir / "vllm_metrics.jsonl"
@@ -335,7 +348,7 @@ def lighteval_evaluation(
                 task_spec = f"{task_tag}@k=1@n=1|0"
 
                 cmd = [
-                    "lighteval", "endpoint", "litellm",
+                    "python", "-m", "lighteval", "endpoint", "litellm",
                     model_args,
                     task_spec,
                     "--remove-reasoning-tags",
@@ -409,7 +422,20 @@ def lighteval_evaluation(
                 if json_files:
                     # Use the first (or only) results file found
                     json_file = json_files[0]
-                    output_name = f"{task_tag}_seed_{seed}.json"
+
+                    # Extract timestamp from lighteval's output filename (e.g., results_2026-07-06T08-03-46.941709.json)
+                    # and use it in our output filename to preserve it for collation
+                    original_name = json_file.name
+                    import re
+                    timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)', original_name)
+
+                    if timestamp_match:
+                        timestamp = timestamp_match.group(1)
+                        output_name = f"{task_tag}_seed_{seed}_{timestamp}.json"
+                    else:
+                        # Fallback if no timestamp found (shouldn't happen with lighteval)
+                        output_name = f"{task_tag}_seed_{seed}.json"
+
                     output_path = results_dir / output_name
 
                     # Copy instead of rename to avoid cross-device link errors
