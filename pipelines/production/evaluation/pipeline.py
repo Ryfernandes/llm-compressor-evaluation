@@ -236,18 +236,22 @@ def pipeline(
             mount_path="/configs"
         )
 
-        """
-        ### Upload collated results to GitHub
-        github_upload_task = upload_to_github(session_id=session_id).after(collate_task)
+        # Upload collated results to GitHub
+        github_upload_task = (
+            upload_to_github(
+                session_id=session_id,
+                save_path="/artifacts/evaluation-artifacts"
+            )
+            .after(collate_task)
+        )
         github_upload_task.set_caching_options(enable_caching=False)
         kubernetes.mount_pvc(
             github_upload_task,
             pvc_name=artifacts_pvc_name,
-            mount_path="/tier2"
+            mount_path="/artifacts"
         )
         kubernetes.use_secret_as_env(
             github_upload_task,
             secret_name="evaluation-pipeline-results-gh",
             secret_key_to_env={"GITHUB_TOKEN": "GITHUB_TOKEN"}
         )
-        """
