@@ -65,6 +65,43 @@ def collate_results(
                     metrics[metric_key] = {"value": value, "stderr": stderr}
         return metrics
 
+    def parse_timestamp_from_filename(filename):
+        """
+        Extract ISO timestamp from filename if present.
+        Both lm-eval and lighteval include ISO timestamps in filenames.
+        Example: results_2026-07-06T08-03-46.941709.json
+        Returns UNIX timestamp or None if parsing fails.
+        """
+        import re
+        # Pattern: YYYY-MM-DDTHH-MM-SS.microseconds
+        pattern = r'(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)'
+        match = re.search(pattern, filename)
+        if match:
+            extracted = match.group(1)
+            # Convert from: 2026-07-06T08-03-46.941709
+            # To ISO format: 2026-07-06T08:03:46.941709
+            iso_string = extracted[:10] + 'T' + extracted[11:13] + ':' + extracted[14:16] + ':' + extracted[17:]
+            try:
+                dt = datetime.fromisoformat(iso_string).replace(tzinfo=timezone.utc)
+                return dt.timestamp()
+            except (ValueError, AttributeError):
+                pass
+        return None
+
+    def extract_lighteval_metrics(task_name, task_results):
+        """Extract metrics from LightEval format."""
+        metrics = {}
+        if task_name in METRICS_REGISTRY:
+            for metric_key in METRICS_REGISTRY[task_name]:
+                value = task_results.get(metric_key)
+                stderr_key = f"{metric_key}_stderr"
+                stderr = task_results.get(stderr_key)
+                if stderr == "N/A":
+                    stderr = None
+                if value is not None:
+                    metrics[metric_key] = {"value": value, "stderr": stderr}
+        return metrics
+
     def extract_lmeval_result(data, task_name, source_filename, task_concurrency_map, harness_metadata):
         """Extract single task result from LM-Eval."""
         task_results = data["results"][task_name]
@@ -103,6 +140,51 @@ def collate_results(
             },
         }
 
+    def extract_lighteval_result(data, task_id, source_filename, task_concurrency_map, harness_metadata):
+        """Extract single task result from LightEval."""
+        task_results = data["results"][task_id]
+        metrics = extract_lighteval_metrics(task_id, task_results)
+
+        config_general = data.get("config_general", {})
+        gen_params = config_general.get("model_config", {}).get("generation_parameters", {})
+
+        # LightEval's start_time is monotonic (system uptime), not UNIX epoch
+        # Parse timestamp from filename instead (both frameworks include ISO timestamp in filename)
+        timestamp = parse_timestamp_from_filename(source_filename)
+
+        duration = config_general.get("total_evaluation_time_secondes")  # Note: typo in lighteval
+        if isinstance(duration, str):
+            try:
+                duration = float(duration)
+            except (ValueError, TypeError):
+                duration = None
+
+        # Get harness info for this task
+        task_harness_info = harness_metadata.get(task_id, {})
+
+        temperature = gen_params.get("temperature", 0)
+
+        return {
+            "task_name": task_id,
+            "model_name": config_general.get("model_name"),
+            "source_filename": source_filename,
+            "evaluation_datetime": timestamp,
+            "evaluation_datetime_iso": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat() if timestamp else None,
+            "evaluation_duration_seconds": duration,
+            "metrics": metrics,
+            "harness": task_harness_info.get("harness"),
+            "harness_version": task_harness_info.get("version"),
+            "inference_parameters": {
+                "do_sample": temperature is not None and temperature > 0,  # Inferred
+                "temperature": temperature,
+                "top_p": gen_params.get("top_p"),
+                "top_k": gen_params.get("top_k"),
+                "max_gen_toks": gen_params.get("max_new_tokens"),  # Different name
+                "seed": gen_params.get("seed"),
+                "concurrency": task_concurrency_map.get(task_id),
+            },
+        }
+
     def parse_json_files(json_files, task_concurrency_map, harness_metadata):
         """Parse all JSON files and extract results."""
         all_results = []
@@ -112,19 +194,30 @@ def collate_results(
                     json_data = json.load(f)
 
                 framework = detect_framework(json_data)
-                if framework != "lmeval":
-                    print(f"Skipping non-LM-Eval file: {json_file_path}")
+                if framework is None:
+                    print(f"Skipping unknown framework file: {json_file_path}")
                     continue
 
                 source_filename = os.path.basename(json_file_path)
 
-                for task_name in json_data.get("results", {}).keys():
-                    if task_name in METRICS_REGISTRY:
-                        result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
-                        result["source_directory"] = source_dir
-                        all_results.append(result)
-                    else:
-                        print(f"Skipping unknown task '{task_name}' in {json_file_path}")
+                if framework == "lmeval":
+                    for task_name in json_data.get("results", {}).keys():
+                        if task_name in METRICS_REGISTRY:
+                            result = extract_lmeval_result(json_data, task_name, source_filename, task_concurrency_map, harness_metadata)
+                            result["source_directory"] = source_dir
+                            all_results.append(result)
+                        else:
+                            print(f"Skipping unknown task '{task_name}' in {json_file_path}")
+                elif framework == "lighteval":
+                    for task_id in json_data.get("results", {}).keys():
+                        if task_id == "all":
+                            continue
+                        if task_id in METRICS_REGISTRY:
+                            result = extract_lighteval_result(json_data, task_id, source_filename, task_concurrency_map, harness_metadata)
+                            result["source_directory"] = source_dir
+                            all_results.append(result)
+                        else:
+                            print(f"Skipping unknown task '{task_id}' in {json_file_path}")
             except Exception as e:
                 print(f"ERROR parsing {json_file_path}: {e}")
         return all_results
