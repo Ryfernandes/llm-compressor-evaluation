@@ -1,5 +1,6 @@
 from .validate_yaml_config import validate_yaml_config
 from .create_session_id import create_session_id
+from .get_model_size import get_model_size
 from .validate_session_id import validate_session_id
 from .process_dataset import process_dataset
 from .compress_model import compress_model

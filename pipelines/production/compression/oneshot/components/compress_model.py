@@ -3,7 +3,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["llmcompressor", "transformers", "datasets"]
+    packages_to_install=["llmcompressor", "transformers", "datasets", "huggingface_hub"]
 )
 def compress_model(
     model_id: str,
@@ -20,12 +20,43 @@ def compress_model(
     Returns the model directory name used for saving.
     """
 
+    import os
     import yaml
     from pathlib import Path
     from datasets import load_from_disk
     from transformers import AutoTokenizer
     from compressed_tensors.offload import dispatch_model
+    from huggingface_hub import snapshot_download
     from llmcompressor import oneshot
+
+    ALLOW_PATTERNS = [
+        "*.json",
+        "*.safetensors",
+        "*.model",
+        "*.txt",
+        "*.jinja",
+        "tokenizer*",
+        "special_tokens_map.json",
+    ]
+
+    IGNORE_PATTERNS = [
+        "original/**/*",
+        "*.bin",
+        "*.gguf",
+    ]
+
+    LOCAL_MODEL_PATH = "/tmp/model"
+
+    # Download model to a local directory (no HF cache)
+    print(f"Downloading model {model_id} to {LOCAL_MODEL_PATH}...")
+    snapshot_download(
+        repo_id=model_id,
+        token=os.environ.get("HF_TOKEN"),
+        local_dir=LOCAL_MODEL_PATH,
+        allow_patterns=ALLOW_PATTERNS,
+        ignore_patterns=IGNORE_PATTERNS,
+    )
+    print(f"Model downloaded to {LOCAL_MODEL_PATH}")
 
     # Load preprocessed calibration dataset
     dataset_path = Path(models_mount_path) / "sessions" / session_id / "dataset"
@@ -46,7 +77,7 @@ def compress_model(
     print(f"{'='*60}")
 
     compressed_model = oneshot(
-        model=model_id,
+        model=LOCAL_MODEL_PATH,
         recipe=recipe_path,
         dataset=ds,
         max_seq_length=max_sequence_length,
@@ -58,7 +89,7 @@ def compress_model(
     print(f"{'='*60}")
 
     # Smoke test generation
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH)
     dispatch_model(compressed_model)
 
     input_ids = tokenizer(

@@ -2,6 +2,7 @@ from kfp import dsl, kubernetes
 from components import (
     validate_yaml_config,
     create_session_id,
+    get_model_size,
     validate_session_id,
     process_dataset,
     compress_model,
@@ -42,6 +43,7 @@ def pipeline(
         yamls_mount_path="/yamls"
     )
     validate_yaml_config_task.set_caching_options(enable_caching=False)
+    validate_yaml_config_task.set_memory_request("512Mi")
     kubernetes.mount_pvc(
         validate_yaml_config_task,
         pvc_name=yaml_pvc_name,
@@ -51,6 +53,19 @@ def pipeline(
     # Generate a unique session ID
     create_session_id_task = create_session_id()
     create_session_id_task.set_caching_options(enable_caching=False)
+    create_session_id_task.set_memory_request("256Mi")
+
+    # Determine model size and compute memory request for compression
+    get_model_size_task = (get_model_size(
+        model_id=model_id,
+    ).after(validate_yaml_config_task))
+    get_model_size_task.set_caching_options(enable_caching=False)
+    get_model_size_task.set_memory_request("1Gi")
+    kubernetes.use_secret_as_env(
+        get_model_size_task,
+        secret_name="ryan-test-hf-hub-secret",
+        secret_key_to_env={"HF_TOKEN": "HF_TOKEN"}
+    )
 
     # Validate session ID uniqueness and claim the session directory
     validate_session_id_task = (validate_session_id(
@@ -58,6 +73,7 @@ def pipeline(
         models_mount_path="/models"
     ).after(validate_yaml_config_task))
     validate_session_id_task.set_caching_options(enable_caching=False)
+    validate_session_id_task.set_memory_request("512Mi")
     kubernetes.mount_pvc(
         validate_session_id_task,
         pvc_name=models_pvc_name,
@@ -75,6 +91,7 @@ def pipeline(
         models_mount_path="/models"
     ).after(validate_session_id_task))
     process_dataset_task.set_caching_options(enable_caching=False)
+    process_dataset_task.set_memory_request("4Gi")
     kubernetes.mount_pvc(
         process_dataset_task,
         pvc_name=models_pvc_name,
@@ -98,10 +115,17 @@ def pipeline(
             yamls_mount_path="/yamls"
         )
         .after(process_dataset_task)
+        .after(get_model_size_task)
         .set_accelerator_type("nvidia.com/gpu")
         .set_accelerator_limit("1")
     )
     compress_model_task.set_caching_options(enable_caching=False)
+    compress_model_task.set_memory_request(get_model_size_task.output)
+    kubernetes.add_node_selector(
+        compress_model_task,
+        label_key="node-role.kubernetes.io/up-h100mcp",
+        label_value=""
+    )
     kubernetes.mount_pvc(
         compress_model_task,
         pvc_name=models_pvc_name,
@@ -124,6 +148,7 @@ def pipeline(
         models_mount_path="/models"
     ).after(compress_model_task))
     clean_up_dataset_task.set_caching_options(enable_caching=False)
+    clean_up_dataset_task.set_memory_request("512Mi")
     kubernetes.mount_pvc(
         clean_up_dataset_task,
         pvc_name=models_pvc_name,
@@ -138,6 +163,7 @@ def pipeline(
         models_mount_path="/models"
     ).after(compress_model_task))
     upload_to_hf_task.set_caching_options(enable_caching=False)
+    upload_to_hf_task.set_memory_request("2Gi")
     kubernetes.mount_pvc(
         upload_to_hf_task,
         pvc_name=models_pvc_name,
@@ -157,6 +183,7 @@ def pipeline(
         models_mount_path="/models"
     ).after(upload_to_hf_task))
     clean_up_model_task.set_caching_options(enable_caching=False)
+    clean_up_model_task.set_memory_request("512Mi")
     kubernetes.mount_pvc(
         clean_up_model_task,
         pvc_name=models_pvc_name,
