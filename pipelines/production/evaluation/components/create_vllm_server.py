@@ -151,10 +151,22 @@ from huggingface_hub import snapshot_download
 import os
 snapshot_download(
     repo_id='${MODEL}',
-    cache_dir='${HF_HOME}',
     token=os.environ.get('HF_TOKEN'),
     local_dir='${LOCAL_MODEL}',
-    local_dir_use_symlinks=False,
+    allow_patterns=[
+        '*.json',
+        '*.safetensors',
+        '*.model',
+        '*.txt',
+        '*.jinja',
+        'tokenizer*',
+        'special_tokens_map.json',
+    ],
+    ignore_patterns=[
+        'original/**/*',
+        '*.bin',
+        '*.gguf',
+    ],
 )
 "
 echo "[+] Model downloaded to ${LOCAL_MODEL}"
