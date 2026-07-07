@@ -214,7 +214,7 @@ def upload_to_github(
         if not issues:
             return ""
 
-        lines = ["### ⚠️ Potential Concurrency Issues\n"]
+        lines = ["### Potential Concurrency Issues\n"]
         lines.append("The following tasks may have experienced resource contention:\n")
         lines.append("| Task | Issues |")
         lines.append("|------|--------|")
