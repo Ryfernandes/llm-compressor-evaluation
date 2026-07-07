@@ -31,9 +31,9 @@ def pipeline(
     upload_to_hf: bool = False,
     save_model_locally: bool = True,
     # PVC spec
-    models_pvc_name: str = "",
-    yaml_pvc_name: str = "",
-    packages_pvc_name: str = "",
+    models_pvc_name: str = "oneshot-pipeline-models-tier-2",
+    yaml_pvc_name: str = "oneshot-pipeline-yamls-tier-2",
+    packages_pvc_name: str = "oneshot-pipeline-packages-tier-2",
 ):
     """Pipeline to compress a model from HuggingFace using LLM Compressor, optionally uploading it to HuggingFace after compression."""
 
@@ -172,7 +172,7 @@ def pipeline(
     kubernetes.use_secret_as_env(
         upload_to_hf_task,
         secret_name="ryan-test-hf-hub-secret",
-        secret_key_to_env={"HF_TOKEN": "HF_TOKEN"}
+        secret_key_to_env={"HF_WRITE": "HF_TOKEN"}
     )
 
     # Clean up compressed model if not saving locally (after upload completes)
