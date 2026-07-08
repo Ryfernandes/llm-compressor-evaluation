@@ -20,13 +20,13 @@ PIPELINE_NAME = "llm-compression-oneshot"
 def pipeline(
     # Model spec
     model_id: str,
-    # Dataset spec
-    dataset_id: str,
-    dataset_split: str,
-    num_calibration_samples: int,
-    max_sequence_length: int,
     # Compression spec
     yaml_filename: str,
+    # Dataset spec
+    dataset_id: str = "",
+    dataset_split: str = "",
+    num_calibration_samples: int = 256,
+    max_sequence_length: int = 512,
     # Upload spec
     upload_to_hf: bool = False,
     save_model_locally: bool = True,

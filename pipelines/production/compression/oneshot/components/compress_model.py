@@ -58,14 +58,16 @@ def compress_model(
     )
     print(f"Model downloaded to {LOCAL_MODEL_PATH}")
 
-    # Load preprocessed calibration dataset
+    # Load preprocessed calibration dataset (if available)
     dataset_path = Path(models_mount_path) / "sessions" / session_id / "dataset"
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Preprocessed dataset not found: {dataset_path}")
-
-    print(f"Loading preprocessed dataset from {dataset_path}")
-    ds = load_from_disk(str(dataset_path))
-    print(f"Dataset loaded: {len(ds)} samples")
+    ds = None
+    if dataset_path.exists():
+        print(f"Loading preprocessed dataset from {dataset_path}")
+        ds = load_from_disk(str(dataset_path))
+        print(f"Dataset loaded: {len(ds)} samples")
+    else:
+        import warnings
+        warnings.warn(f"No preprocessed dataset found at {dataset_path}. Running oneshot without a dataset.")
 
     # Resolve recipe path
     recipe_path = str(Path(yamls_mount_path) / yaml_filename)
@@ -76,13 +78,16 @@ def compress_model(
     print(f"Starting oneshot compression for {model_id}")
     print(f"{'='*60}")
 
-    compressed_model = oneshot(
-        model=LOCAL_MODEL_PATH,
-        recipe=recipe_path,
-        dataset=ds,
-        max_seq_length=max_sequence_length,
-        num_calibration_samples=num_calibration_samples,
-    )
+    oneshot_kwargs = {
+        "model": LOCAL_MODEL_PATH,
+        "recipe": recipe_path,
+    }
+    if ds is not None:
+        oneshot_kwargs["dataset"] = ds
+        oneshot_kwargs["max_seq_length"] = max_sequence_length
+        oneshot_kwargs["num_calibration_samples"] = num_calibration_samples
+
+    compressed_model = oneshot(**oneshot_kwargs)
 
     print(f"\n{'='*60}")
     print("Compression complete, running smoke test")

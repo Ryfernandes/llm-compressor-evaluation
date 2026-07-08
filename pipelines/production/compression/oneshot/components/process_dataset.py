@@ -23,16 +23,47 @@ def process_dataset(
     https://github.com/vllm-project/llm-compressor/blob/main/examples/awq/fp8_block_llama_example.py
     """
 
+    import warnings
     from pathlib import Path
-    from datasets import load_dataset
+    from datasets import load_dataset, DatasetDict
     from transformers import AutoTokenizer
+
+    if not dataset_id:
+        warnings.warn("No dataset_id provided. Skipping dataset preparation.")
+        return
 
     print(f"Loading tokenizer for {model_id}")
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-    print(f"Loading dataset {dataset_id} (split={dataset_split}, samples={num_calibration_samples})")
-    print(f"Using dataset cache directory: {datasets_mount_path}")
-    ds = load_dataset(dataset_id, split=f"{dataset_split}[:{num_calibration_samples}]", cache_dir=datasets_mount_path)
+    if dataset_split:
+        print(f"Loading dataset {dataset_id} (split={dataset_split}, samples={num_calibration_samples})")
+        print(f"Using dataset cache directory: {datasets_mount_path}")
+        ds = load_dataset(dataset_id, split=f"{dataset_split}[:{num_calibration_samples}]", cache_dir=datasets_mount_path)
+    else:
+        warnings.warn(f"No dataset_split provided for dataset {dataset_id}. Attempting to infer split.")
+        print(f"Loading dataset {dataset_id} (no split specified)")
+        print(f"Using dataset cache directory: {datasets_mount_path}")
+        ds = load_dataset(dataset_id, cache_dir=datasets_mount_path)
+
+        if isinstance(ds, DatasetDict):
+            COMMON_SPLITS = ["train", "validation", "test"]
+            selected_split = None
+            for candidate in COMMON_SPLITS:
+                for available in ds.keys():
+                    if available.startswith(candidate):
+                        selected_split = available
+                        break
+                if selected_split:
+                    break
+
+            if not selected_split:
+                selected_split = list(ds.keys())[0]
+
+            warnings.warn(f"Inferred dataset split: '{selected_split}'")
+            ds = ds[selected_split]
+
+        ds = ds.select(range(min(num_calibration_samples, len(ds))))
+
     ds = ds.shuffle(seed=42)
     print(f"Dataset loaded and shuffled: {len(ds)} samples")
 
