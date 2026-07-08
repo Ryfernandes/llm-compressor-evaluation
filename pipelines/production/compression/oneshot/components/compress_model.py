@@ -3,7 +3,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["llmcompressor", "transformers", "datasets", "huggingface_hub"]
+    packages_to_install=["llmcompressor @ git+https://github.com/vllm-project/llm-compressor.git@main", "transformers", "datasets", "huggingface_hub"]
 )
 def compress_model(
     model_id: str,
@@ -72,6 +72,9 @@ def compress_model(
     # Resolve recipe path
     recipe_path = str(Path(yamls_mount_path) / yaml_filename)
     print(f"Using recipe: {recipe_path}")
+
+    # Triton needs a writable cache directory; the container's home may be /
+    os.environ.setdefault("TRITON_CACHE_DIR", "/tmp/.triton")
 
     # Run oneshot compression
     print(f"\n{'='*60}")
