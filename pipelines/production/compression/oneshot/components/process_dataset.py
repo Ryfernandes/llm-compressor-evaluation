@@ -3,7 +3,7 @@ from kfp import dsl
 
 @dsl.component(
     base_image="python:3.12",
-    packages_to_install=["datasets", "transformers"]
+    packages_to_install=["datasets", "transformers", "jinja2"]
 )
 def process_dataset(
     model_id: str,
@@ -13,6 +13,7 @@ def process_dataset(
     max_sequence_length: int,
     session_id: str,
     models_mount_path: str = "/models",
+    datasets_mount_path: str = "/datasets",
 ) -> None:
     """
     Load a calibration dataset, apply the model's chat template, tokenize,
@@ -30,7 +31,8 @@ def process_dataset(
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
     print(f"Loading dataset {dataset_id} (split={dataset_split}, samples={num_calibration_samples})")
-    ds = load_dataset(dataset_id, split=f"{dataset_split}[:{num_calibration_samples}]")
+    print(f"Using dataset cache directory: {datasets_mount_path}")
+    ds = load_dataset(dataset_id, split=f"{dataset_split}[:{num_calibration_samples}]", cache_dir=datasets_mount_path)
     ds = ds.shuffle(seed=42)
     print(f"Dataset loaded and shuffled: {len(ds)} samples")
 

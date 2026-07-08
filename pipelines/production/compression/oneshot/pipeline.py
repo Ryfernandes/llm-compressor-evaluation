@@ -33,6 +33,7 @@ def pipeline(
     # PVC spec
     models_pvc_name: str = "oneshot-pipeline-models-tier-2",
     yaml_pvc_name: str = "oneshot-pipeline-yamls-tier-2",
+    datasets_pvc_name: str = "oneshot-pipeline-datasets-tier-2",
     packages_pvc_name: str = "oneshot-pipeline-packages-tier-2",
 ):
     """Pipeline to compress a model from HuggingFace using LLM Compressor, optionally uploading it to HuggingFace after compression."""
@@ -88,7 +89,8 @@ def pipeline(
         num_calibration_samples=num_calibration_samples,
         max_sequence_length=max_sequence_length,
         session_id=create_session_id_task.output,
-        models_mount_path="/models"
+        models_mount_path="/models",
+        datasets_mount_path="/datasets"
     ).after(validate_session_id_task))
     process_dataset_task.set_caching_options(enable_caching=False)
     process_dataset_task.set_memory_request("4Gi")
@@ -96,6 +98,11 @@ def pipeline(
         process_dataset_task,
         pvc_name=models_pvc_name,
         mount_path="/models"
+    )
+    kubernetes.mount_pvc(
+        process_dataset_task,
+        pvc_name=datasets_pvc_name,
+        mount_path="/datasets"
     )
     kubernetes.use_secret_as_env(
         process_dataset_task,
