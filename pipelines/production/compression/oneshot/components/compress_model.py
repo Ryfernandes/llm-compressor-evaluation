@@ -142,7 +142,9 @@ def compress_model(
     save_path.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSaving compressed model to {save_path}")
-    compressed_model.save_pretrained(str(save_path), save_compressed=True)
+    compressed_model.save_pretrained(
+        str(save_path), save_compressed=True, max_shard_size="5GB"
+    )
     tokenizer.save_pretrained(str(save_path))
     print(f"Model saved as: {model_name}")
 
