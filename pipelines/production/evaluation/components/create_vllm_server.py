@@ -17,6 +17,11 @@ def create_vllm_server(
     configs_pvc_mount_path: str,
     artifacts_pvc_name: str,
     artifacts_pvc_mount_path: str,
+    # Local model spec
+    local_model: bool = False,
+    local_model_path: str = "",
+    local_models_pvc_name: str = "oneshot-pipeline-models-tier-2",
+    local_models_mount_path: str = "/local-models",
     # Pod spec
     namespace: str = "machine-learning",
     service_account_name: str = "ml-workload",
@@ -57,42 +62,61 @@ def create_vllm_server(
         tp = model_args.get("tp", 1)
         dp = model_args.get("dp", 1)
 
-    # Dry run download to estimate model size
-    print(f"Running dry run to estimate size of model {model}...")
+    allow_patterns = [
+        "*.json",
+        "*.safetensors",
+        "*.model",
+        "*.txt",
+        "*.jinja",
+        "tokenizer*",
+        "special_tokens_map.json",
+    ]
+    ignore_patterns = [
+        "*.bin",
+        "*.gguf",
+    ]
 
-    dry_run_files = snapshot_download(
-        repo_id=model,
-        token=os.environ.get("HF_TOKEN"),
-        dry_run=True,
-        allow_patterns=[
-            "*.json",
-            "*.safetensors",
-            "*.model",
-            "*.txt",
-            "*.jinja",
-            "tokenizer*",
-            "special_tokens_map.json",
-        ],
-        ignore_patterns=[
-            "original/**/*",
-            "*.bin",
-            "*.gguf",
-        ],
-    )
+    if local_model:
+        import fnmatch
 
-    model_size_bytes = sum(
-        f.file_size for f in dry_run_files
-        if f.file_size is not None
-    )
+        local_source = Path(local_models_mount_path) / local_model_path
+        print(f"Running dry run to estimate size of local model at {local_source}...")
+
+        model_size_bytes = 0
+        for root, dirs, files in os.walk(local_source):
+            if "original" in dirs:
+                dirs.remove("original")
+            for f in files:
+                if any(fnmatch.fnmatch(f, p) for p in ignore_patterns):
+                    continue
+                if any(fnmatch.fnmatch(f, p) for p in allow_patterns):
+                    model_size_bytes += os.path.getsize(os.path.join(root, f))
+    else:
+        print(f"Running dry run to estimate size of model {model}...")
+
+        dry_run_files = snapshot_download(
+            repo_id=model,
+            token=os.environ.get("HF_TOKEN"),
+            dry_run=True,
+            allow_patterns=allow_patterns,
+            ignore_patterns=["original/**/*"] + ignore_patterns,
+        )
+
+        model_size_bytes = sum(
+            f.file_size for f in dry_run_files
+            if f.file_size is not None
+        )
 
     model_size_gi = model_size_bytes / (1024 ** 3)
-    tier1_size_gi = int(model_size_gi) + tier1_storage_buffer_gi + 1
-    tier1_size = f"{tier1_size_gi}Gi"
     inference_size_gi = model_size_gi + kv_cache_buffer_gi
 
     print(f"Model size: {model_size_gi:.2f} GiB")
-    print(f"Tier1 storage size (with {tier1_storage_buffer_gi} GiB buffer): {tier1_size}")
     print(f"Inference size (with {kv_cache_buffer_gi} GiB minimum KV cache buffer): {inference_size_gi:.2f} GiB")
+
+    if not local_model:
+        tier1_size_gi = int(model_size_gi) + tier1_storage_buffer_gi + 1
+        tier1_size = f"{tier1_size_gi}Gi"
+        print(f"Tier1 storage size (with {tier1_storage_buffer_gi} GiB buffer): {tier1_size}")
 
     # Validate and adjust tp based on model size
     min_tp = math.ceil(inference_size_gi / gib_per_gpu)
@@ -126,8 +150,6 @@ def create_vllm_server(
     script = r'''
 set -eu
 
-export HF_HOME="/tier1/hf-hub"
-export HF_HUB_CACHE="/tier1/hf-hub"
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
@@ -140,19 +162,25 @@ mkdir -p \
   "$TORCH_HOME" \
   "$TORCHINDUCTOR_CACHE_DIR" \
   "$TRITON_CACHE_DIR" \
-  "$VLLM_CACHE_ROOT" \
-  "$HF_HOME"
+  "$VLLM_CACHE_ROOT"
 
-LOCAL_MODEL="/tier1/model"
+if [ "$IS_LOCAL_MODEL" = "true" ]; then
+  MODEL_PATH="/local-models/${LOCAL_MODEL_PATH}"
+  echo "[*] Using local model at ${MODEL_PATH}"
+else
+  export HF_HOME="/tier1/hf-hub"
+  export HF_HUB_CACHE="/tier1/hf-hub"
+  mkdir -p "$HF_HOME"
 
-echo "[*] Downloading model ${MODEL} directly to tier1..."
-python3 -c "
+  MODEL_PATH="/tier1/model"
+  echo "[*] Downloading model ${MODEL} directly to tier1..."
+  python3 -c "
 from huggingface_hub import snapshot_download
 import os
 snapshot_download(
     repo_id='${MODEL}',
     token=os.environ.get('HF_TOKEN'),
-    local_dir='${LOCAL_MODEL}',
+    local_dir='${MODEL_PATH}',
     allow_patterns=[
         '*.json',
         '*.safetensors',
@@ -169,17 +197,18 @@ snapshot_download(
     ],
 )
 "
-echo "[+] Model downloaded to ${LOCAL_MODEL}"
+  echo "[+] Model downloaded to ${MODEL_PATH}"
+fi
 
 echo "================================================================"
 echo " Starting vLLM Server"
-echo " HF model: ${MODEL}"
-echo " Local path: ${LOCAL_MODEL}"
+echo " Model: ${MODEL}"
+echo " Model path: ${MODEL_PATH}"
 echo " TP=${TP}, DP=${DP}"
 echo "================================================================"
 
 VLLM_ARGS=(
-  "$LOCAL_MODEL"
+  "$MODEL_PATH"
   --served-model-name "$MODEL"
   --tensor-parallel-size "${TP}"
   --data-parallel-size "${DP}"
@@ -245,6 +274,8 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
                     },
                     "env": [
                         {"name": "MODEL", "value": model},
+                        {"name": "IS_LOCAL_MODEL", "value": "true" if local_model else "false"},
+                        {"name": "LOCAL_MODEL_PATH", "value": local_model_path},
                         {"name": "TP", "value": str(tp)},
                         {"name": "DP", "value": str(dp)},
                         {"name": "MAX_MODEL_LEN", "value": str(max_model_len)},
@@ -274,7 +305,6 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
                         {"name": "VLLM_CACHE_ROOT", "value": "/tier2/cache/vllm"},
                     ],
                     "volumeMounts": [
-                        {"name": "tier1", "mountPath": "/tier1"},
                         {"name": "tier2", "mountPath": "/tier2"},
                         {"name": "artifacts", "mountPath": artifacts_pvc_mount_path},
                     ],
@@ -285,27 +315,6 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
                 }
             ],
             "volumes": [
-                {
-                    "name": "tier1",
-                    "ephemeral": {
-                        "volumeClaimTemplate": {
-                            "metadata": {
-                                "labels": {
-                                    "type": "ephemeral-volume",
-                                }
-                            },
-                            "spec": {
-                                "accessModes": ["ReadWriteOnce"],
-                                "storageClassName": tier1_storage_class,
-                                "resources": {
-                                    "requests": {
-                                        "storage": tier1_size,
-                                    }
-                                },
-                            },
-                        }
-                    },
-                },
                 {
                     "name": "tier2",
                     "persistentVolumeClaim": {
@@ -321,6 +330,45 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
             ],
         },
     }
+
+    if local_model:
+        pod_manifest["spec"]["volumes"].append({
+            "name": "local-models",
+            "persistentVolumeClaim": {
+                "claimName": local_models_pvc_name,
+            },
+        })
+        pod_manifest["spec"]["containers"][0]["volumeMounts"].append({
+            "name": "local-models",
+            "mountPath": "/local-models",
+            "readOnly": True,
+        })
+    else:
+        pod_manifest["spec"]["volumes"].append({
+            "name": "tier1",
+            "ephemeral": {
+                "volumeClaimTemplate": {
+                    "metadata": {
+                        "labels": {
+                            "type": "ephemeral-volume",
+                        }
+                    },
+                    "spec": {
+                        "accessModes": ["ReadWriteOnce"],
+                        "storageClassName": tier1_storage_class,
+                        "resources": {
+                            "requests": {
+                                "storage": tier1_size,
+                            }
+                        },
+                    },
+                }
+            },
+        })
+        pod_manifest["spec"]["containers"][0]["volumeMounts"].append({
+            "name": "tier1",
+            "mountPath": "/tier1",
+        })
 
     service_manifest = {
         "apiVersion": "v1",

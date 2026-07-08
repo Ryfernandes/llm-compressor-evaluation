@@ -4,8 +4,9 @@ from kfp import dsl
 @dsl.component(base_image="python:3.12")
 def collate_results(
     session_id: str,
-    model_id: str,
+    served_model_name: str,
     config_filename: str,
+    local_model: bool = False,
     artifacts_pvc_mount_path: str = "/artifacts",
     configs_pvc_mount_path: str = "/configs",
 ):
@@ -726,22 +727,29 @@ def collate_results(
     unique_tasks = sorted(set(r["task_name"] for r in all_results))
     unique_models = sorted(set(r["model_name"] for r in all_results if r.get("model_name")))
 
+    metadata = {
+        "parser_version": "1.0",
+        "parse_datetime": datetime.now(timezone.utc).isoformat(),
+        "session_id": session_id,
+        "evaluated_from_local_checkpoint": local_model,
+        "total_results_parsed": len(all_results),
+        "total_files_parsed": len(json_files),
+        "unique_tasks": unique_tasks,
+        "unique_models": unique_models,
+        "proxy_logs_parsed": len(task_seed_proxy_stats) > 0,
+        "vllm_metrics_parsed": len(task_seed_vllm_metrics) > 0,
+        "log_statistics_parsed": len(task_seed_log_stats) > 0,
+    }
+
+    if local_model:
+        metadata["model_path"] = served_model_name
+    else:
+        metadata["model_id"] = served_model_name
+
     output_data = {
         "server": startup_stats if startup_stats else None,
         "results": grouped_results,
-        "metadata": {
-            "parser_version": "1.0",
-            "parse_datetime": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
-            "model_id": model_id,
-            "total_results_parsed": len(all_results),
-            "total_files_parsed": len(json_files),
-            "unique_tasks": unique_tasks,
-            "unique_models": unique_models,
-            "proxy_logs_parsed": len(task_seed_proxy_stats) > 0,
-            "vllm_metrics_parsed": len(task_seed_vllm_metrics) > 0,
-            "log_statistics_parsed": len(task_seed_log_stats) > 0,
-        }
+        "metadata": metadata,
     }
 
     output_dir = session_dir / "collated"
