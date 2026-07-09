@@ -67,7 +67,7 @@ def upload_to_github(
         collated_data = json.load(f)
 
     metadata = collated_data.get("metadata", {})
-    model_id = metadata.get("model_id", "unknown-model")
+    model_id = metadata.get("model_id") or metadata.get("model_path") or "unknown-model"
 
     # Create a timestamped filename for the upload
     filename = f"collated-{session_id}.json"
