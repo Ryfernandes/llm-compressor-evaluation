@@ -12,7 +12,8 @@ from kfp import dsl
 )
 def lighteval_evaluation(
     service_url: str,
-    config_filename: str,
+    model_config_name: str,
+    evaluation_config_name: str,
     session_id: str,
     model_path: str = "Qwen/Qwen3-8B",
     artifacts_pvc_mount_path: str = "/artifacts",
@@ -31,21 +32,26 @@ def lighteval_evaluation(
     DEFAULT_BASE_SEED = 1234
     DEFAULT_TIMEOUT = 3600
 
-    # Load configuration (already validated by validate_config component)
-    config_path = Path(configs_pvc_mount_path) / config_filename
+    # Load model configuration (already validated by validate_config component)
+    model_config_path = Path(configs_pvc_mount_path) / "model" / model_config_name
 
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+    with open(model_config_path, 'r') as f:
+        model_config = json.load(f)
 
     # Extract model configuration (all required fields guaranteed by validation)
-    model_config = config["model"]
     temperature = model_config["temperature"]
     top_p = model_config["top_p"]
     top_k = model_config["top_k"]
     max_model_len = model_config["max_model_len"]
 
+    # Load evaluation configuration
+    evaluation_config_path = Path(configs_pvc_mount_path) / "evaluation" / evaluation_config_name
+
+    with open(evaluation_config_path, 'r') as f:
+        evaluation_config = json.load(f)
+
     # Extract tasks for lighteval harness (required fields guaranteed by validation)
-    all_tasks = config["tasks"]
+    all_tasks = evaluation_config["tasks"]
     task_list = []
 
     for task in all_tasks:

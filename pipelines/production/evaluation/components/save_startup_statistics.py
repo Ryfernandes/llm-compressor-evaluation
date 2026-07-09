@@ -7,7 +7,7 @@ def save_startup_statistics(
     # Session spec
     session_id: str,
     # Config spec
-    config_filename: str,
+    model_config_name: str,
     # PVC spec
     artifacts_pvc_mount_path: str,
     configs_pvc_mount_path: str,
@@ -31,11 +31,11 @@ def save_startup_statistics(
     if not log_file_path.exists():
         raise FileNotFoundError(f"Log file not found at {log_file_path}")
 
-    # Load config to get max_model_len
-    config_path = Path(configs_pvc_mount_path) / config_filename
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-    max_model_len = config["model"]["max_model_len"]
+    # Load model config to get max_model_len
+    model_config_path = Path(configs_pvc_mount_path) / "model" / model_config_name
+    with open(model_config_path, 'r') as f:
+        model_config = json.load(f)
+    max_model_len = model_config["max_model_len"]
 
     # Read the log file
     with open(log_file_path, 'r') as f:

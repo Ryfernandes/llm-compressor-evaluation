@@ -4,38 +4,45 @@ from kfp import dsl
     base_image="python:3.12"
 )
 def validate_config(
-    config_filename: str,
+    model_config_name: str,
+    evaluation_config_name: str,
     configs_pvc_mount_path: str = "/configs",
 ) -> None:
     import json
     from pathlib import Path
 
-    # Load configuration file
-    config_path = Path(configs_pvc_mount_path) / config_filename
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+    # Load model configuration file
+    model_config_path = Path(configs_pvc_mount_path) / "model" / model_config_name
+    if not model_config_path.exists():
+        raise FileNotFoundError(f"Model config file not found: {model_config_path}")
 
-    print(f"Validating config file: {config_path}")
+    print(f"Validating model config file: {model_config_path}")
 
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+    with open(model_config_path, 'r') as f:
+        model_config = json.load(f)
 
     # Validate model configuration
-    model_config = config.get("model")
-    if not model_config:
-        raise ValueError("Config validation failed: 'model' section is required")
-
     required_model_fields = ["max_model_len", "temperature", "top_p", "top_k"]
     missing_model_fields = [field for field in required_model_fields if field not in model_config]
 
     if missing_model_fields:
-        raise ValueError(f"Config validation failed: 'model' section missing required fields: {missing_model_fields}")
+        raise ValueError(f"Config validation failed: model config missing required fields: {missing_model_fields}")
 
     max_model_len = model_config["max_model_len"]
     print(f"Model config validated: max_model_len={max_model_len}, temperature={model_config['temperature']}, top_p={model_config['top_p']}, top_k={model_config['top_k']}")
 
+    # Load evaluation configuration file
+    evaluation_config_path = Path(configs_pvc_mount_path) / "evaluation" / evaluation_config_name
+    if not evaluation_config_path.exists():
+        raise FileNotFoundError(f"Evaluation config file not found: {evaluation_config_path}")
+
+    print(f"Validating evaluation config file: {evaluation_config_path}")
+
+    with open(evaluation_config_path, 'r') as f:
+        evaluation_config = json.load(f)
+
     # Validate tasks
-    tasks = config.get("tasks")
+    tasks = evaluation_config.get("tasks")
     if not tasks:
         raise ValueError("Config validation failed: 'tasks' array is required and must not be empty")
 

@@ -10,8 +10,8 @@ def create_vllm_server(
     model: str,
     # Session spec
     session_id: str,
-    # Evaluation spec
-    config_filename: str,
+    # Config spec
+    model_config_name: str,
     # PVC spec
     model_server_pvc_name: str,
     configs_pvc_mount_path: str,
@@ -50,17 +50,16 @@ def create_vllm_server(
     config.load_incluster_config()
     core = client.CoreV1Api()
 
-    # Load configuration (already validated by validate_config component)
-    evaluation_config_path = Path(configs_pvc_mount_path) / config_filename
+    # Load model configuration (already validated by validate_config component)
+    model_config_path = Path(configs_pvc_mount_path) / "model" / model_config_name
 
-    with open(evaluation_config_path, "r") as f:
-        evaluation_config = json.load(f)
-        model_args = evaluation_config["model"]
+    with open(model_config_path, "r") as f:
+        model_config = json.load(f)
 
-        reasoning_parser = model_args.get("reasoning_parser", "")
-        max_model_len = model_args["max_model_len"]
-        tp = model_args.get("tp", 1)
-        dp = model_args.get("dp", 1)
+        reasoning_parser = model_config.get("reasoning_parser", "")
+        max_model_len = model_config["max_model_len"]
+        tp = model_config.get("tp", 1)
+        dp = model_config.get("dp", 1)
 
     allow_patterns = [
         "*.json",
