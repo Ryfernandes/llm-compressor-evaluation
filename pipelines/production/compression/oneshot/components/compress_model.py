@@ -13,6 +13,7 @@ def compress_model(
     max_sequence_length: int,
     models_mount_path: str = "/models",
     yamls_mount_path: str = "/yamls",
+    llmcompressor_pip_source: str = "llmcompressor @ git+https://github.com/vllm-project/llm-compressor.git@main",
 ) -> str:
     """
     Compress a model using LLM Compressor's oneshot API with a YAML recipe,
@@ -20,6 +21,7 @@ def compress_model(
     Returns the model directory name used for saving.
     """
 
+    import json
     import os
     import yaml
     from pathlib import Path
@@ -28,6 +30,9 @@ def compress_model(
     from compressed_tensors.offload import dispatch_model
     from huggingface_hub import snapshot_download
     from llmcompressor import oneshot
+    from importlib.metadata import version as get_version
+
+    llmcompressor_version = get_version("llmcompressor")
 
     ALLOW_PATTERNS = [
         "*.json",
@@ -146,6 +151,14 @@ def compress_model(
         str(save_path), save_compressed=True, max_shard_size="5GB"
     )
     tokenizer.save_pretrained(str(save_path))
+
+    llmcompressor_info = {
+        "pip_source": llmcompressor_pip_source,
+        "pip_version": llmcompressor_version,
+    }
+    with open(save_path / "llmcompressor_info.json", "w") as f:
+        json.dump(llmcompressor_info, f, indent=2)
+
     print(f"Model saved as: {model_name}")
 
     return model_name
