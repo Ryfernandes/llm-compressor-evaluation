@@ -6,9 +6,7 @@ from components import (
     validate_session_id,
     process_dataset,
     compress_model,
-    upload_to_huggingface,
     clean_up_dataset,
-    clean_up_compressed_model,
 )
 
 PIPELINE_NAME = "llm-compression-oneshot"
@@ -27,16 +25,13 @@ def pipeline(
     dataset_split: str = "",
     num_calibration_samples: int = 256,
     max_sequence_length: int = 512,
-    # Upload spec
-    upload_to_hf: bool = False,
-    save_model_locally: bool = True,
     # PVC spec
     models_pvc_name: str = "oneshot-pipeline-models-tier-2",
     yaml_pvc_name: str = "oneshot-pipeline-yamls-tier-2",
     datasets_pvc_name: str = "oneshot-pipeline-datasets-tier-2",
     packages_pvc_name: str = "oneshot-pipeline-packages-tier-2",
 ):
-    """Pipeline to compress a model from HuggingFace using LLM Compressor, optionally uploading it to HuggingFace after compression."""
+    """Pipeline to compress a model from HuggingFace using LLM Compressor."""
 
     # Validate that the YAML recipe file exists and is syntactically valid
     validate_yaml_config_task = validate_yaml_config(
@@ -158,41 +153,6 @@ def pipeline(
     clean_up_dataset_task.set_memory_request("512Mi")
     kubernetes.mount_pvc(
         clean_up_dataset_task,
-        pvc_name=models_pvc_name,
-        mount_path="/models"
-    )
-
-    # Upload compressed model to HuggingFace (conditional on upload_to_hf)
-    upload_to_hf_task = (upload_to_huggingface(
-        upload_to_hf=upload_to_hf,
-        session_id=create_session_id_task.output,
-        model_name=compress_model_task.output,
-        models_mount_path="/models"
-    ).after(compress_model_task))
-    upload_to_hf_task.set_caching_options(enable_caching=False)
-    upload_to_hf_task.set_memory_request("2Gi")
-    kubernetes.mount_pvc(
-        upload_to_hf_task,
-        pvc_name=models_pvc_name,
-        mount_path="/models"
-    )
-    kubernetes.use_secret_as_env(
-        upload_to_hf_task,
-        secret_name="ryan-test-hf-hub-secret",
-        secret_key_to_env={"HF_WRITE": "HF_TOKEN"}
-    )
-
-    # Clean up compressed model if not saving locally (after upload completes)
-    clean_up_model_task = (clean_up_compressed_model(
-        save_model_locally=save_model_locally,
-        session_id=create_session_id_task.output,
-        model_name=compress_model_task.output,
-        models_mount_path="/models"
-    ).after(upload_to_hf_task))
-    clean_up_model_task.set_caching_options(enable_caching=False)
-    clean_up_model_task.set_memory_request("512Mi")
-    kubernetes.mount_pvc(
-        clean_up_model_task,
         pvc_name=models_pvc_name,
         mount_path="/models"
     )

@@ -161,4 +161,4 @@ def compress_model(
 
     print(f"Model saved as: {model_name}")
 
-    return model_name
+    return f"Session ID: {session_id}\nModel Name: {model_name}"

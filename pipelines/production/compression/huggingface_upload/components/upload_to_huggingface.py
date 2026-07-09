@@ -6,19 +6,13 @@ from kfp import dsl
     packages_to_install=["huggingface_hub"]
 )
 def upload_to_huggingface(
-    upload_to_hf: bool,
     session_id: str,
     model_name: str,
     models_mount_path: str = "/models",
 ) -> str:
     """
     Upload a compressed model to a new HuggingFace repository.
-    Only runs if upload_to_hf is True; otherwise returns early.
     """
-
-    if not upload_to_hf:
-        print("Skipping HuggingFace upload (upload_to_hf=False)")
-        return "skipped"
 
     import os
     from pathlib import Path
