@@ -11,6 +11,8 @@ def save_startup_statistics(
     # PVC spec
     artifacts_pvc_mount_path: str,
     configs_pvc_mount_path: str,
+    # Pod spec
+    node_selector_key: str = "node-role.kubernetes.io/up-h100mcp",
     # Logs spec
     logs_filename: str = "vllm_server.log",
     evaluation_statistics_filename: str = "vllm_log_statistics.json",
@@ -102,6 +104,7 @@ def save_startup_statistics(
 
     # Add max_model_len from config
     stats['max_model_len'] = max_model_len
+    stats['node_selector'] = node_selector_key
 
     # Create the output structure
     output = {
