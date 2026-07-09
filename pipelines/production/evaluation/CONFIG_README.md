@@ -4,37 +4,27 @@ This document describes the configuration file format for the LLM evaluation pip
 
 ## Overview
 
-The evaluation pipeline uses a JSON configuration file that specifies:
-- Model serving parameters (vLLM server configuration)
-- Evaluation tasks to run across different harnesses
-- Sampling parameters for generation
+The evaluation pipeline uses two separate JSON configuration files:
+- **Model config**: Model serving and generation parameters (vLLM server configuration, sampling parameters)
+- **Evaluation config**: Evaluation tasks to run across different harnesses
 
-Configuration files should be stored in the configs PVC and referenced by filename when launching the pipeline.
+Configuration files are stored in the configs PVC under separate subdirectories:
+- Model configs: `/configs/model/<model_config_name>`
+- Evaluation configs: `/configs/evaluation/<evaluation_config_name>`
 
-## Configuration Structure
-
-```json
-{
-  "model": {
-    // Model serving and generation parameters
-  },
-  "tasks": [
-    // Array of evaluation tasks
-  ]
-}
-```
+When launching the pipeline, provide the filenames (not full paths) for both `model_config_name` and `evaluation_config_name`.
 
 ## Model Configuration
 
-The `model` section configures the vLLM server and generation parameters.
+Stored in `/configs/model/`. Contains model serving and generation parameters at the top level.
 
 ### Required Fields
 
 | Field | Type | Description | Example |
 |-------|------|-------------|---------|
-| `max_model_len` | integer | Maximum sequence length (context + generation) supported by the model. Must be ≥ largest `max_tokens` across all tasks. | `16384` |
+| `max_model_len` | integer | Maximum sequence length (context + generation) supported by the model. Must be >= largest `max_tokens` across all tasks. | `16384` |
 | `temperature` | float | Sampling temperature for generation. Higher values = more random. Range: `0.0` to `2.0`. | `0.8` |
-| `top_p` | float | Nucleus sampling parameter. Only tokens with cumulative probability ≤ `top_p` are considered. Range: `0.0` to `1.0`. | `0.95` |
+| `top_p` | float | Nucleus sampling parameter. Only tokens with cumulative probability <= `top_p` are considered. Range: `0.0` to `1.0`. | `0.95` |
 | `top_k` | integer | Top-k sampling parameter. Only the top `k` most likely tokens are considered. | `50` |
 
 ### Optional Fields
@@ -49,32 +39,30 @@ The `model` section configures the vLLM server and generation parameters.
 
 ```json
 {
-  "model": {
-    "reasoning_parser": "",
-    "max_model_len": 16384,
-    "tp": 1,
-    "dp": 1,
-    "temperature": 0.8,
-    "top_p": 0.95,
-    "top_k": 50
-  }
+  "reasoning_parser": "",
+  "max_model_len": 16384,
+  "tp": 1,
+  "dp": 1,
+  "temperature": 0.8,
+  "top_p": 0.95,
+  "top_k": 50
 }
 ```
 
-## Task Configuration
+## Evaluation Configuration
 
-The `tasks` array contains evaluation tasks to run. Each task specifies which evaluation harness to use and task-specific parameters.
+Stored in `/configs/evaluation/`. Contains the `tasks` array specifying evaluation tasks to run.
 
 ### Required Fields (All Harnesses)
 
 | Field | Type | Description | Example |
 |-------|------|-------------|---------|
-| `harness` | string | Evaluation harness identifier. Currently supported: `"lm_eval"`. | `"lm_eval"` |
+| `harness` | string | Evaluation harness identifier. Currently supported: `"lm_eval"`, `"lighteval"`. | `"lm_eval"` |
 | `tag` | string | Task identifier within the harness (e.g., lm-eval task name). | `"gsm8k_platinum_cot_llama"` |
 | `shots` | integer | Number of few-shot examples to include in the prompt. Range: `0` to `10`. | `5` |
 | `reps` | integer | Number of evaluation repetitions with different seeds. Each rep produces independent results. | `3` |
 | `concurrency` | integer | Number of concurrent inference requests. Higher values increase throughput but require more GPU memory. | `256` |
-| `max_tokens` | integer | Maximum number of tokens to generate per example. Must be ≤ `model.max_model_len`. | `16000` |
+| `max_tokens` | integer | Maximum number of tokens to generate per example. Must be <= `max_model_len` in the model config. | `16000` |
 
 ### Optional Fields
 
@@ -87,9 +75,9 @@ The `tasks` array contains evaluation tasks to run. Each task specifies which ev
 
 Each evaluation component filters tasks based on the `harness` field:
 - `lm_eval_evaluation` component: processes tasks where `harness == "lm_eval"`
-- Future harnesses (e.g., `lighteval`) will filter for their respective harness identifier
+- `lighteval_evaluation` component: processes tasks where `harness == "lighteval"`
 
-This allows a single config to specify tasks for multiple evaluation frameworks.
+This allows a single evaluation config to specify tasks for multiple evaluation frameworks.
 
 ### Example
 
@@ -120,19 +108,24 @@ This allows a single config to specify tasks for multiple evaluation frameworks.
 
 ## Complete Example
 
-See `references/example_config.json` for a complete working example:
+**Model config** (`/configs/model/qwen3-8b.json`):
 
 ```json
 {
-  "model": {
-    "reasoning_parser": "",
-    "max_model_len": 16384,
-    "tp": 1,
-    "dp": 1,
-    "temperature": 0.8,
-    "top_p": 0.95,
-    "top_k": 50
-  },
+  "reasoning_parser": "",
+  "max_model_len": 16384,
+  "tp": 1,
+  "dp": 1,
+  "temperature": 0.8,
+  "top_p": 0.95,
+  "top_k": 50
+}
+```
+
+**Evaluation config** (`/configs/evaluation/standard-benchmarks.json`):
+
+```json
+{
   "tasks": [
     {
       "harness": "lm_eval",
@@ -150,33 +143,32 @@ See `references/example_config.json` for a complete working example:
 
 ## Validation Rules
 
-The pipeline validates the configuration file before starting expensive operations (GPU pod creation). Validation failures will cause the pipeline to fail immediately with a descriptive error message.
+The pipeline validates both configuration files before starting expensive operations (GPU pod creation). Validation failures will cause the pipeline to fail immediately with a descriptive error message.
 
-### Model Validation
+### Model Config Validation
 
-- ✅ `model` section must exist
-- ✅ Required fields must be present: `max_model_len`, `temperature`, `top_p`, `top_k`
-- ✅ `max_model_len` must be a positive integer
-- ✅ `temperature` must be a float between 0.0 and 2.0
-- ✅ `top_p` must be a float between 0.0 and 1.0
-- ✅ `top_k` must be a positive integer
+- Required fields must be present: `max_model_len`, `temperature`, `top_p`, `top_k`
+- `max_model_len` must be a positive integer
+- `temperature` must be a float between 0.0 and 2.0
+- `top_p` must be a float between 0.0 and 1.0
+- `top_k` must be a positive integer
 
-### Task Validation
+### Evaluation Config Validation
 
-- ✅ `tasks` array must exist and contain at least one task
-- ✅ Each task must have required fields: `harness`, `tag`, `shots`, `reps`, `concurrency`, `max_tokens`
-- ✅ `max_tokens` must be ≤ `model.max_model_len` for every task
-- ✅ `shots` must be a non-negative integer
-- ✅ `reps` must be a positive integer
-- ✅ `concurrency` must be a positive integer
+- `tasks` array must exist and contain at least one task
+- Each task must have required fields: `harness`, `tag`, `shots`, `reps`, `concurrency`, `max_tokens`
+- `max_tokens` must be <= `max_model_len` from the model config for every task
+- `shots` must be a non-negative integer
+- `reps` must be a positive integer
+- `concurrency` must be a positive integer
 
 ### Validation Component
 
 Validation is performed by the `validate_config` pipeline component, which runs immediately after `validate_session_id` and before any resource-intensive operations. This ensures fast failure on invalid configurations.
 
-## Common Task Tags (lm_eval)
+## Common Task Tags
 
-Common lm-eval task identifiers:
+Common evaluation task identifiers:
 
 ### Mathematics
 - `gsm8k_platinum_cot_llama` - Grade school math with chain-of-thought
@@ -209,7 +201,7 @@ Refer to the [lm-eval documentation](https://github.com/EleutherAI/lm-evaluation
 - Standard tasks (non-reasoning): `8192` - `16000`
 - Reasoning tasks (with chain-of-thought): `32000` - `65000`
 - Code generation tasks: `4096` - `8192`
-- Always ensure: `max_tokens + 8192 (buffer) ≤ max_model_len`
+- Always ensure: `max_tokens + 8192 (buffer) <= max_model_len`
 
 ### Choosing Concurrency
 - Higher concurrency = higher throughput BUT more GPU memory usage
@@ -245,15 +237,15 @@ Refer to the [lm-eval documentation](https://github.com/EleutherAI/lm-evaluation
 ## Troubleshooting
 
 ### Error: "max_tokens exceeds model's max_model_len"
-- **Cause**: A task's `max_tokens` is larger than `model.max_model_len`
-- **Fix**: Either increase `max_model_len` or decrease `max_tokens` for the failing task
+- **Cause**: A task's `max_tokens` is larger than `max_model_len` in the model config
+- **Fix**: Either increase `max_model_len` in the model config or decrease `max_tokens` for the failing task
 
-### Error: "Config file not found"
-- **Cause**: Config file doesn't exist in the configs PVC at the specified path
-- **Fix**: Ensure the config file is uploaded to the configs PVC and the filename matches exactly
+### Error: "Model config file not found" / "Evaluation config file not found"
+- **Cause**: Config file doesn't exist in the configs PVC at the expected path
+- **Fix**: Ensure model configs are in `/configs/model/` and evaluation configs are in `/configs/evaluation/` on the configs PVC, and the filenames match exactly
 
 ### Error: "Missing required fields"
-- **Cause**: Required fields are missing from `model` or `tasks` sections
+- **Cause**: Required fields are missing from the model config or evaluation config tasks
 - **Fix**: Add all required fields listed in this README
 
 ### Warning: "No lm_eval tasks found in config"
@@ -270,9 +262,9 @@ Refer to the [lm-eval documentation](https://github.com/EleutherAI/lm-evaluation
 
 ## Storage Locations
 
-- **Config files**: Upload to the configs PVC (`evaluation-pipeline-configs-tier-2`) in the `machine-learning` namespace
-- **Example config**: `references/example_config.json` in this repository
-- **Pipeline parameter**: Pass config filename (not full path) as `config_filename` parameter
+- **Model configs**: Upload to `/configs/model/` on the configs PVC (`evaluation-pipeline-configs-tier-2`) in the `machine-learning` namespace
+- **Evaluation configs**: Upload to `/configs/evaluation/` on the configs PVC (`evaluation-pipeline-configs-tier-2`) in the `machine-learning` namespace
+- **Pipeline parameters**: Pass config filenames (not full paths) as `model_config_name` and `evaluation_config_name` parameters
 
 ## Related Documentation
 

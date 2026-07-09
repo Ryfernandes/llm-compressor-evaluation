@@ -5,7 +5,7 @@ from kfp import dsl
 def collate_results(
     session_id: str,
     served_model_name: str,
-    config_filename: str,
+    evaluation_config_name: str,
     local_model: bool = False,
     artifacts_pvc_mount_path: str = "/artifacts",
     configs_pvc_mount_path: str = "/configs",
@@ -644,15 +644,15 @@ def collate_results(
     vllm_metrics_path = logs_dir / "vllm_metrics.jsonl"
     vllm_log_stats_path = logs_dir / "vllm_log_statistics.json"
 
-    # Load config to get task concurrency mapping
-    config_path = Path(configs_pvc_mount_path) / config_filename
-    with open(config_path, 'r') as f:
-        config = json.load(f)
+    # Load evaluation config to get task concurrency mapping
+    evaluation_config_path = Path(configs_pvc_mount_path) / "evaluation" / evaluation_config_name
+    with open(evaluation_config_path, 'r') as f:
+        evaluation_config = json.load(f)
 
     # Create task_name -> concurrency and limit mappings
     task_concurrency = {}
     task_limit = {}
-    for task in config.get("tasks", []):
+    for task in evaluation_config.get("tasks", []):
         task_tag = task.get("tag")
         concurrency = task.get("concurrency")
         limit = task.get("limit")

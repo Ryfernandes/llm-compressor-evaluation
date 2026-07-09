@@ -24,8 +24,9 @@ PIPELINE_NAME = "llm-evaluation"
 def pipeline(
     # Session spec
     session_id: str,
-    # Evaluation spec
-    config_filename: str,
+    # Config spec
+    model_config_name: str,
+    evaluation_config_name: str,
     # Model spec
     model_id: str = "",
     local_model: bool = False,
@@ -55,7 +56,8 @@ def pipeline(
 
     # Validate config file structure and required fields
     validate_config_task = (validate_config(
-        config_filename=config_filename,
+        model_config_name=model_config_name,
+        evaluation_config_name=evaluation_config_name,
         configs_pvc_mount_path="/configs"
     ).after(validate_session_id_task))
     validate_config_task.set_caching_options(enable_caching=False)
@@ -90,7 +92,7 @@ def pipeline(
         create_vllm_task = (create_vllm_server(
             model=validate_model_task.output,
             session_id=session_id,
-            config_filename=config_filename,
+            model_config_name=model_config_name,
             model_server_pvc_name=model_server_pvc_name,
             configs_pvc_mount_path="/configs",
             artifacts_pvc_name=artifacts_pvc_name,
@@ -151,7 +153,7 @@ def pipeline(
         save_stats_task = (
             save_startup_statistics(
                 session_id=session_id,
-                config_filename=config_filename,
+                model_config_name=model_config_name,
                 artifacts_pvc_mount_path="/artifacts",
                 configs_pvc_mount_path="/configs"
             )
@@ -173,7 +175,8 @@ def pipeline(
         lm_evaluation_task = (
             lm_eval_evaluation(
                 service_url=create_proxy_task.output,
-                config_filename=config_filename,
+                model_config_name=model_config_name,
+                evaluation_config_name=evaluation_config_name,
                 session_id=session_id,
                 model_path=validate_model_task.output,
                 artifacts_pvc_mount_path="/artifacts",
@@ -210,7 +213,8 @@ def pipeline(
         lighteval_evaluation_task = (
             lighteval_evaluation(
                 service_url=create_proxy_task.output,
-                config_filename=config_filename,
+                model_config_name=model_config_name,
+                evaluation_config_name=evaluation_config_name,
                 session_id=session_id,
                 model_path=validate_model_task.output,
                 artifacts_pvc_mount_path="/artifacts",
@@ -248,7 +252,7 @@ def pipeline(
             collate_results(
                 session_id=session_id,
                 served_model_name=validate_model_task.output,
-                config_filename=config_filename,
+                evaluation_config_name=evaluation_config_name,
                 local_model=local_model,
                 artifacts_pvc_mount_path="/artifacts",
                 configs_pvc_mount_path="/configs"
