@@ -14,7 +14,6 @@ spec:
       securityContext:
         runAsUser: 0
       command: ["/bin/bash", "-c", "apt-get update && apt-get install -y vim fio && sleep infinity"]
-      env:
       volumeMounts:
       - name: yamls
         mountPath: /yamls

@@ -1,10 +1,10 @@
-## How To: Set Up Config and Recipe Files for Pipeline Runs
+# How To: Set Up Config and Recipe Files for Pipeline Runs
 
-### Overview
+## Overview
 
-To make the inputs into the compression and evaluation pipelines more flexible, both accept files as inputs. For the oneshot compression pipeline, there is a single `.yaml` file which is used to specify the [recipe for compression](https://docs.vllm.ai/projects/llm-compressor/en/latest/api/llmcompressor/recipe/recipe/#llmcompressor.recipe.recipe.Recipe). For the evaluation pipeline, there are two `.json` files that need to be provided. One specifies model parameters (tp/dp, sampling parameters), while the other specifies the evaluation tasks to be run and the settings for each task. Guidelines for the format of the evaluation pipeline `.json` files can be found [here](../../pipelines/evaluation/README.md).
+To make the inputs to the compression and evaluation pipelines more flexible, both accept files as inputs. For the oneshot compression pipeline, there is a single `.yaml` file which is used to specify the [recipe for compression](https://docs.vllm.ai/projects/llm-compressor/en/latest/api/llmcompressor/recipe/recipe/#llmcompressor.recipe.recipe.Recipe). For the evaluation pipeline, there are two `.json` files that need to be provided. One specifies model parameters (tp/dp, sampling parameters), while the other specifies the evaluation tasks to be run and the settings for each task. Guidelines for the format of the evaluation pipeline `.json` files can be found [here](../../pipelines/evaluation/README.md).
 
-### Uploading Files
+## Uploading Files
 
 *Note: This part of the guide is specific to the WDC cluster. Steps may differ for a different OpenShift AI cluster*
 
@@ -40,7 +40,7 @@ Now that you are on the WDC Bastion, you will need to login to access the OpenSh
 oc login {OpenShift Cluster URI} -u username
 ```
 
-This will ask for a password for you account, which should be configured by your system administrator.
+This will ask for a password for your account, which should be configured by your system administrator.
 
 **Step 3: Create an interactive pod**
 
@@ -68,7 +68,6 @@ spec:
       securityContext:
         runAsUser: 0
       command: ["/bin/bash", "-c", "apt-get update && apt-get install -y vim fio && sleep infinity"]
-      env:
       volumeMounts:
       - name: yamls
         mountPath: /yamls
@@ -104,9 +103,9 @@ Once the pod shows as "Running," you may proceed to the next step.
 
 **Step 4: Upload your config files to the WDC Bastion**
 
-Now that your pod has been created, you will need to have your config files on the WDC Bastion, in order to copy them into the appropriate PVCs. To do this, find an appropriate directory on the WDC Bastion and copy the contents of your `.yaml` and `.json` files. For proceeding steps, I will assume that these files are named `recipe.yaml`, `model_config.json`, and `evaluation_config.json`, so substitute your actual filenames as needed.
+Now that your pod has been created, you will need to have your config files on the WDC Bastion, in order to copy them into the appropriate PVCs. To do this, find an appropriate directory on the WDC Bastion and copy the contents of your `.yaml` and `.json` files. The following steps assume that these files are named `recipe.yaml`, `model_config.json`, and `evaluation_config.json`, so substitute your actual filenames as needed.
 
-*Note: It is best to use more descriptive filenames than the basic example ones, so that way you do not overwrite the files for subsequent runs. For example, a model config like `qwen_30b_a3b.json` is more descriptive*
+*Note: It is best to use more descriptive filenames than the basic example ones, so that you do not overwrite files from subsequent runs. For example, a model config like `qwen_30b_a3b.json` is more descriptive*
 
 **Step 5: Copy files onto the PVC**
 
@@ -156,6 +155,6 @@ qwen3_8b_no_thinking.json  qwen_30b_a3b.json
 
 If you see the expected filename in each PVC location, everything is ready for pipeline runs.
 
-### Using Files in the Pipeline
+## Using Files in the Pipeline
 
-Once files have been uploaded to the appropriate PVC locations, all that you need in order to use the in each pipeline is the filename. You do not need to include the path to the file. For example, use `model_config.json` rather than `/configs/model/model_config.json`. The pipeline will automatically verify that your `.yaml` and `.json` files exist and are in the correct format, allowing you to debug as needed.
+Once files have been uploaded to the appropriate PVC locations, all that you need in order to use them in each pipeline is the filename. You do not need to include the path to the file. For example, use `model_config.json` rather than `/configs/model/model_config.json`. The pipeline will automatically verify that your `.yaml` and `.json` files exist and are in the correct format, allowing you to debug as needed.
