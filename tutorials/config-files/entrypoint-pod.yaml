@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: Pod
+metadata:
+    name: {your-name}-pipelines-entrypoint
+    namespace: machine-learning
+spec:
+    serviceAccountName: ml-workload
+    securityContext:
+      fsGroup: 1000760000
+      fsGroupChangePolicy: Always
+    containers:
+    - name: debug-container
+      image: pytorch/pytorch:2.9.0-cuda13.0-cudnn9-runtime
+      securityContext:
+        runAsUser: 0
+      command: ["/bin/bash", "-c", "apt-get update && apt-get install -y vim fio && sleep infinity"]
+      env:
+      volumeMounts:
+      - name: yamls
+        mountPath: /yamls
+      - name: configs
+        mountPath: /configs
+      envFrom:
+      - configMapRef:
+          name: ceph-bucket-class
+      - secretRef:
+          name: ceph-bucket-class
+    volumes:
+    - name: yamls
+      persistentVolumeClaim:
+        claimName: oneshot-pipeline-yamls-tier-2
+    - name: configs
+      persistentVolumeClaim:
+        claimName: evaluation-pipeline-configs-tier-2
