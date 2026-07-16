@@ -20,6 +20,7 @@ def pipeline(
     model_id: str,
     # Compression spec
     yaml_filename: str,
+    model_name: str,
     # Dataset spec
     dataset_id: str = "",
     dataset_split: str = "",
@@ -111,6 +112,7 @@ def pipeline(
             model_id=model_id,
             yaml_filename=yaml_filename,
             session_id=create_session_id_task.output,
+            model_name=model_name,
             num_calibration_samples=num_calibration_samples,
             max_sequence_length=max_sequence_length,
             models_mount_path="/models",

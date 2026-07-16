@@ -9,6 +9,7 @@ def compress_model(
     model_id: str,
     yaml_filename: str,
     session_id: str,
+    model_name: str,
     num_calibration_samples: int,
     max_sequence_length: int,
     models_mount_path: str = "/models",
@@ -23,7 +24,6 @@ def compress_model(
 
     import json
     import os
-    import yaml
     from pathlib import Path
     from datasets import load_from_disk
     from transformers import AutoTokenizer
@@ -111,36 +111,6 @@ def compress_model(
     output = compressed_model.generate(input_ids, max_new_tokens=100)
     generated_text = tokenizer.decode(output[0])
     print(f"Smoke test output:\n{generated_text}")
-
-    # Determine model name from recipe scheme
-    with open(recipe_path, "r") as f:
-        recipe_data = yaml.safe_load(f)
-
-    scheme = None
-    for stage_content in recipe_data.values():
-        if not isinstance(stage_content, dict):
-            continue
-        for group_content in stage_content.values():
-            if not isinstance(group_content, dict):
-                continue
-            if "scheme" in group_content:
-                scheme = group_content["scheme"]
-                break
-            for modifier_config in group_content.values():
-                if isinstance(modifier_config, dict) and "scheme" in modifier_config:
-                    scheme = modifier_config["scheme"]
-                    break
-            if scheme:
-                break
-        if scheme:
-            break
-
-    model_short_name = model_id.rstrip("/").split("/")[-1]
-    if scheme:
-        suffix = scheme.replace("_", "-")
-    else:
-        suffix = Path(yaml_filename).stem
-    model_name = f"{model_short_name}-{suffix}"
 
     # Save compressed model
     save_path = Path(models_mount_path) / "sessions" / session_id / model_name

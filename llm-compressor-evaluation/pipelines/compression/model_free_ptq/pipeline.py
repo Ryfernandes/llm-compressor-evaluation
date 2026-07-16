@@ -18,6 +18,7 @@ def pipeline(
     model_id: str,
     # Compression spec
     scheme: str,
+    model_name: str,
     ignore: str = "",
     max_workers: int = 15,
     # PVC spec
@@ -68,6 +69,7 @@ def pipeline(
             model_id=model_id,
             scheme=scheme,
             session_id=create_session_id_task.output,
+            model_name=model_name,
             ignore=ignore,
             max_workers=max_workers,
             models_mount_path="/models",

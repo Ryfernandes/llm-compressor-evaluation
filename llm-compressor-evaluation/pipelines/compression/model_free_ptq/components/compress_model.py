@@ -9,6 +9,7 @@ def compress_model(
     model_id: str,
     scheme: str,
     session_id: str,
+    model_name: str,
     ignore: str = "",
     max_workers: int = 15,
     models_mount_path: str = "/models",
@@ -62,11 +63,6 @@ def compress_model(
     ignore_list = [s.strip() for s in ignore.split(",") if s.strip()] if ignore else []
     if ignore_list:
         print(f"Ignore list: {ignore_list}")
-
-    # Build model name from scheme
-    model_short_name = model_id.rstrip("/").split("/")[-1]
-    suffix = scheme.replace("_", "-")
-    model_name = f"{model_short_name}-{suffix}"
 
     # Determine save path
     save_path = Path(models_mount_path) / "sessions" / session_id / model_name
