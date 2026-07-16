@@ -14,7 +14,6 @@ def compress_model(
     max_sequence_length: int,
     models_mount_path: str = "/models",
     yamls_mount_path: str = "/yamls",
-    llmcompressor_pip_source: str = "llmcompressor @ git+https://github.com/vllm-project/llm-compressor.git@main",
 ) -> str:
     """
     Compress a model using LLM Compressor's oneshot API with a YAML recipe,
@@ -24,6 +23,7 @@ def compress_model(
 
     import json
     import os
+    import subprocess
     from pathlib import Path
     from datasets import load_from_disk
     from transformers import AutoTokenizer
@@ -122,11 +122,29 @@ def compress_model(
     )
     tokenizer.save_pretrained(str(save_path))
 
+    freeze_output = subprocess.run(
+        ["pip", "freeze"], capture_output=True, text=True, check=True
+    ).stdout
+    source = next(
+        line for line in freeze_output.splitlines()
+        if line.lower().startswith("llmcompressor")
+    )
+
+    inspect_output = subprocess.run(
+        ["pip", "inspect"], capture_output=True, text=True, check=True
+    ).stdout
+    installed_packages = json.loads(inspect_output)["installed"]
+    llmcompressor_pkg = next(
+        pkg for pkg in installed_packages
+        if pkg["metadata"]["name"].lower() == "llmcompressor"
+    )
+
     llmcompressor_info = {
-        "pip_source": llmcompressor_pip_source,
-        "pip_version": llmcompressor_version,
+        "source": source,
+        "version": llmcompressor_version,
+        "details": llmcompressor_pkg.get("direct_url"),
     }
-    with open(save_path / "llmcompressor_info.json", "w") as f:
+    with open(save_path / "llmcompressor_source.json", "w") as f:
         json.dump(llmcompressor_info, f, indent=2)
 
     print(f"Model saved as: {model_name}")
