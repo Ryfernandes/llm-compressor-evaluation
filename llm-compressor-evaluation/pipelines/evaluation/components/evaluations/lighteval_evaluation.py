@@ -111,10 +111,27 @@ def lighteval_evaluation(
     # Setup harness metadata file
     harness_metadata_file = logs_dir / "harness_metadata.json"
 
-    # Get lighteval version
+    # Get lighteval version and install metadata from pip
     import importlib.metadata
     lighteval_version = importlib.metadata.version("lighteval")
-    harness_name = "lighteval[extended] @ git+https://github.com/neuralmagic/lighteval.git@eldar-fix-litellm"
+
+    freeze_output = subprocess.run(
+        ["pip", "freeze"], capture_output=True, text=True, check=True
+    ).stdout
+    harness_name = next(
+        line for line in freeze_output.splitlines()
+        if line.lower().startswith("lighteval")
+    )
+
+    inspect_output = subprocess.run(
+        ["pip", "inspect"], capture_output=True, text=True, check=True
+    ).stdout
+    installed_packages = json.loads(inspect_output)["installed"]
+    lighteval_pkg = next(
+        pkg for pkg in installed_packages
+        if pkg["metadata"]["name"].lower() == "lighteval"
+    )
+    harness_details = lighteval_pkg.get("direct_url")
 
     print(f"Using {harness_name} version {lighteval_version}")
 
@@ -414,7 +431,8 @@ def lighteval_evaluation(
                 if task_tag not in harness_metadata:
                     harness_metadata[task_tag] = {
                         "harness": harness_name,
-                        "version": lighteval_version
+                        "version": lighteval_version,
+                        "harness_details": harness_details,
                     }
 
                 with open(harness_metadata_file, 'w') as f:

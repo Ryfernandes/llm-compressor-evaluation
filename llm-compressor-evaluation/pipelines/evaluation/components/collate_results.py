@@ -153,6 +153,7 @@ def collate_results(
             "metrics": metrics,
             "harness": task_harness_info.get("harness"),
             "harness_version": task_harness_info.get("version"),
+            "harness_details": task_harness_info.get("harness_details"),
             "inference_parameters": {
                 "do_sample": gen_kwargs.get("do_sample"),
                 "temperature": gen_kwargs.get("temperature"),
@@ -203,6 +204,7 @@ def collate_results(
             "metrics": metrics,
             "harness": task_harness_info.get("harness"),
             "harness_version": task_harness_info.get("version"),
+            "harness_details": task_harness_info.get("harness_details"),
             "inference_parameters": {
                 "do_sample": temperature is not None and temperature > 0,  # Inferred
                 "temperature": temperature,
@@ -506,6 +508,7 @@ def collate_results(
                 "model_name": model_name,
                 "harness": first_run.get("harness"),
                 "harness_version": first_run.get("harness_version"),
+                "harness_details": first_run.get("harness_details"),
                 "inference_parameters": first_run["inference_parameters"],
                 "num_repetitions": len(runs),
                 "aggregate_stats": compute_aggregate_stats(runs),

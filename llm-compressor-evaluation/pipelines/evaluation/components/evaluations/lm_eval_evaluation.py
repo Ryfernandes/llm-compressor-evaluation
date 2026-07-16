@@ -106,10 +106,27 @@ def lm_eval_evaluation(
     # Setup harness metadata file
     harness_metadata_file = logs_dir / "harness_metadata.json"
 
-    # Get lm-eval version
+    # Get lm-eval version and install metadata from pip
     import importlib.metadata
     lm_eval_version = importlib.metadata.version("lm-eval")
-    harness_name = "lm_eval[api,ifeval,multilingual] @ git+https://github.com/neuralmagic/lm-evaluation-harness.git@main"
+
+    freeze_output = subprocess.run(
+        ["pip", "freeze"], capture_output=True, text=True, check=True
+    ).stdout
+    harness_name = next(
+        line for line in freeze_output.splitlines()
+        if line.lower().startswith("lm-eval") or line.lower().startswith("lm_eval")
+    )
+
+    inspect_output = subprocess.run(
+        ["pip", "inspect"], capture_output=True, text=True, check=True
+    ).stdout
+    installed_packages = json.loads(inspect_output)["installed"]
+    lm_eval_pkg = next(
+        pkg for pkg in installed_packages
+        if pkg["metadata"]["name"].lower().replace("-", "_") == "lm_eval"
+    )
+    harness_details = lm_eval_pkg.get("direct_url")
 
     print(f"Using {harness_name} version {lm_eval_version}")
 
@@ -414,7 +431,8 @@ def lm_eval_evaluation(
                 if task_tag not in harness_metadata:
                     harness_metadata[task_tag] = {
                         "harness": harness_name,
-                        "version": lm_eval_version
+                        "version": lm_eval_version,
+                        "harness_details": harness_details,
                     }
 
                 with open(harness_metadata_file, 'w') as f:
