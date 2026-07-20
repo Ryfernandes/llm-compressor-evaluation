@@ -12,7 +12,7 @@ All pipelines live under `pipelines/` and are compiled to versioned YAML artifac
 
 ### Evaluation
 
-![Evaluation pipeline DAG](content/readme/evaluation.png)
+![Evaluation pipeline DAG](./content/evaluation.png)
 
 Evaluates a HuggingFace or local model using [vLLM](https://github.com/vllm-project/vllm) serving with the [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness) and [lighteval](https://github.com/huggingface/lighteval) harnesses.
 
@@ -30,7 +30,7 @@ Evaluation is configured via two JSON files: a **model config** (serving paramet
 
 ### Oneshot Compression
 
-![Oneshot compression pipeline DAG](content/readme/oneshot.png)
+![Oneshot compression pipeline DAG](./content/oneshot.png)
 
 Compresses a HuggingFace model using LLM Compressor's `oneshot` API with a YAML compression recipe and calibration dataset.
 
@@ -44,7 +44,7 @@ The pipeline:
 
 ### Model-Free PTQ Compression
 
-![Model-free PTQ compression pipeline DAG](content/readme/model_free_ptq.png)
+![Model-free PTQ compression pipeline DAG](./content/model_free_ptq.png)
 
 Compresses a model using LLM Compressor's `model_free_ptq` API with a quantization scheme preset. Unlike the oneshot pipeline, this requires no calibration data.
 
@@ -56,7 +56,7 @@ The pipeline:
 
 ### HuggingFace Upload
 
-![HuggingFace upload pipeline DAG](content/readme/huggingface_upload.png)
+![HuggingFace upload pipeline DAG](./content/huggingface_upload.png)
 
 Uploads a compressed model from the models PVC to HuggingFace, with an option to delete the local copy after upload.
 
