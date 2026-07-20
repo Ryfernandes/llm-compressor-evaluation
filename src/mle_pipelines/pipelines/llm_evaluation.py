@@ -1,6 +1,5 @@
 from kfp import dsl, kubernetes
 from mle_pipelines.components import (
-    cleanup_model_staging,
     collate_results,
     create_vllm_server,
     create_vllm_proxy,
