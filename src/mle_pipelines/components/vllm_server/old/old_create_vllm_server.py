@@ -478,9 +478,6 @@ exec vllm serve "${VLLM_ARGS[@]}" 2>&1 | tee -a "${LOGS_PATH}"
 
         raise TimeoutError(f"Timed out waiting for {url}")
 
-    def save_startup_statistics() -> None:
-        pass
-
     create_or_patch_service()
 
     delete_pod_if_exists()
